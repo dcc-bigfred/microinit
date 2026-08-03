@@ -53,23 +53,23 @@ jobs:
   build:
     name: Build musl (${{ matrix.name }})
     needs: test
-    runs-on: ubuntu-latest
+    # Native runners + apt musl-tools (no musl.cc download).
+    runs-on: ${{ matrix.runner }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - name: arm64
+            runner: ubuntu-24.04-arm
             rust_target: aarch64-unknown-linux-musl
             dist_name: microinit-linux-arm64
-            cross_tarball: aarch64-linux-musl-cross.tgz
-            cross_prefix: aarch64-linux-musl
             linker_env: CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER
             cc_env: CC_aarch64_unknown_linux_musl
             ar_env: AR_aarch64_unknown_linux_musl
           - name: amd64
+            runner: ubuntu-latest
             rust_target: x86_64-unknown-linux-musl
             dist_name: microinit-linux-amd64
-            cross_tarball: x86_64-linux-musl-cross.tgz
-            cross_prefix: x86_64-linux-musl
             linker_env: CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER
             cc_env: CC_x86_64_unknown_linux_musl
             ar_env: AR_x86_64_unknown_linux_musl
@@ -87,19 +87,19 @@ jobs:
         with:
           key: ${{ matrix.name }}-musl
 
-      - name: Install musl cross toolchain
+      - name: Install musl toolchain (apt)
         run: |
           set -euo pipefail
-          curl -fsSL "https://musl.cc/${{ matrix.cross_tarball }}" \
-            | sudo tar -xz -C /opt
-          echo "/opt/${{ matrix.cross_prefix }}-cross/bin" >> "$GITHUB_PATH"
+          sudo apt-get update
+          sudo apt-get install -y musl-tools musl-dev
+          musl-gcc --version
 
       - name: Build static binary + package dist
         run: |
           set -euo pipefail
-          export ${{ matrix.linker_env }}=${{ matrix.cross_prefix }}-gcc
-          export ${{ matrix.cc_env }}=${{ matrix.cross_prefix }}-gcc
-          export ${{ matrix.ar_env }}=${{ matrix.cross_prefix }}-ar
+          export ${{ matrix.linker_env }}=musl-gcc
+          export ${{ matrix.cc_env }}=musl-gcc
+          export ${{ matrix.ar_env }}=ar
           export RUSTFLAGS='-C target-feature=+crt-static'
 
           cargo build --release --target ${{ matrix.rust_target }}
@@ -123,6 +123,13 @@ jobs:
           fi
 
           file "dist/${{ matrix.dist_name }}"
+          # Expect a static binary (no dynamic libc dependency).
+          if ldd "dist/${{ matrix.dist_name }}" 2>&1 | grep -qi 'not a dynamic\|statically linked'; then
+            echo "static binary OK"
+          else
+            echo "warning: ldd output:" >&2
+            ldd "dist/${{ matrix.dist_name }}" >&2 || true
+          fi
           ls -lh "dist/${{ matrix.dist_name }}"
 
       - name: Upload artifacts
