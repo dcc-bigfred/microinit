@@ -46,6 +46,7 @@ fn request_response_serde_roundtrip() {
             state: ServiceState::Failed,
             pid: None,
             restarts: 2,
+            liveness_failures: 1,
             enabled: true,
         },
     };

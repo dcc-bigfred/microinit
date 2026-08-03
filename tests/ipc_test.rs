@@ -52,6 +52,7 @@ fn frame_roundtrip_unix_pair() {
                 state: ServiceState::Running,
                 pid: Some(42),
                 restarts: 0,
+                liveness_failures: 0,
                 enabled: true,
             }],
         },

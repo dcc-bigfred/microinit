@@ -11,18 +11,19 @@ pub fn cmd_list(socket: &Path) -> Result<()> {
     match request(socket, &Request::List)? {
         Response::List { services } => {
             println!(
-                "{:<20} {:<12} {:>8} {:>8} {:>8}",
-                "NAME", "STATE", "PID", "RESTARTS", "ENABLED"
+                "{:<20} {:<22} {:>8} {:>8} {:>8} {:>10}",
+                "NAME", "STATE", "PID", "RESTARTS", "ENABLED", "LIVE_FAIL"
             );
             for s in services {
                 let pid = s.pid.map(|p| p.to_string()).unwrap_or_else(|| "-".into());
                 println!(
-                    "{:<20} {:<12} {:>8} {:>8} {:>8}",
+                    "{:<20} {:<22} {:>8} {:>8} {:>8} {:>10}",
                     s.name,
                     s.state.to_string(),
                     pid,
                     s.restarts,
-                    if s.enabled { "yes" } else { "no" }
+                    if s.enabled { "yes" } else { "no" },
+                    s.liveness_failures
                 );
             }
             Ok(())

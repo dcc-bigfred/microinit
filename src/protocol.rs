@@ -45,6 +45,9 @@ pub struct ServiceStatus {
     pub state: ServiceState,
     pub pid: Option<i32>,
     pub restarts: u32,
+    /// How many times `livenessProbe` failed (cumulative since boot / service add).
+    #[serde(default)]
+    pub liveness_failures: u32,
     pub enabled: bool,
 }
 

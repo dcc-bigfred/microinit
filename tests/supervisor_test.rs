@@ -380,6 +380,10 @@ fn liveness_probe_restarts_oneshot_on_failure() {
         sup.status("net").unwrap().restarts >= 1,
         "expected at least one liveness restart"
     );
+    assert!(
+        sup.status("net").unwrap().liveness_failures >= 1,
+        "expected at least one liveness failure counter bump"
+    );
     assert_eq!(sup.status("net").unwrap().state, ServiceState::Succeeded);
     let _ = std::fs::remove_file(&marker);
     let _ = std::fs::remove_dir_all(dir);

@@ -161,13 +161,14 @@ Disabling stops the service; enabling requests a start (subject to dependencies)
       "state": "running",
       "pid": 1234,
       "restarts": 0,
+      "liveness_failures": 0,
       "enabled": true
     }
   ]
 }
 ```
 
-`pid` may be `null` when not tracked.
+`pid` may be `null` when not tracked. `liveness_failures` counts how many times `livenessProbe` failed since boot (or since the service was added on reload).
 
 ### `status`
 
@@ -179,6 +180,7 @@ Disabling stops the service; enabling requests a start (subject to dependencies)
     "state": "running",
     "pid": 1234,
     "restarts": 0,
+    "liveness_failures": 0,
     "enabled": true
   }
 }

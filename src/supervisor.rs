@@ -32,6 +32,7 @@ struct Runtime {
     state: ServiceState,
     pid: Option<i32>,
     restarts: u32,
+    liveness_failures: u32,
     enabled: bool,
     running_since: Option<Instant>,
 }
@@ -41,6 +42,7 @@ struct Runtime {
 pub struct ServiceMetrics {
     pub name: String,
     pub restarts: u32,
+    pub liveness_failures: u32,
     pub pid: Option<i32>,
     pub enabled: bool,
     pub state: ServiceState,
@@ -89,6 +91,12 @@ impl Shared {
     fn bump_restarts(&self, name: &str) {
         if let Some(rt) = mutex_lock(&self.runtimes).get_mut(name) {
             rt.restarts = rt.restarts.saturating_add(1);
+        }
+    }
+
+    fn bump_liveness_failures(&self, name: &str) {
+        if let Some(rt) = mutex_lock(&self.runtimes).get_mut(name) {
+            rt.liveness_failures = rt.liveness_failures.saturating_add(1);
         }
     }
 
@@ -211,6 +219,7 @@ impl Supervisor {
                     },
                     pid: None,
                     restarts: 0,
+                    liveness_failures: 0,
                     enabled: svc.enabled,
                     running_since: None,
                 },
@@ -243,6 +252,7 @@ impl Supervisor {
                     state: rt.state,
                     pid: rt.pid,
                     restarts: rt.restarts,
+                    liveness_failures: rt.liveness_failures,
                     enabled: rt.enabled,
                 })
             })
@@ -259,6 +269,7 @@ impl Supervisor {
             state: rt.state,
             pid: rt.pid,
             restarts: rt.restarts,
+            liveness_failures: rt.liveness_failures,
             enabled: rt.enabled,
         })
     }
@@ -440,6 +451,7 @@ impl Supervisor {
             .map(|(name, rt)| ServiceMetrics {
                 name: name.clone(),
                 restarts: rt.restarts,
+                liveness_failures: rt.liveness_failures,
                 pid: rt.pid,
                 enabled: rt.enabled,
                 state: rt.state,
@@ -522,6 +534,7 @@ impl Supervisor {
                         },
                         pid: None,
                         restarts: 0,
+                        liveness_failures: 0,
                         enabled: svc.enabled,
                         running_since: None,
                     },
@@ -743,6 +756,7 @@ impl Supervisor {
         );
         self.shared
             .set_state(&cfg.name, ServiceState::Restarting, None);
+        self.shared.bump_liveness_failures(&cfg.name);
         self.shared.bump_restarts(&cfg.name);
         self.stop_tracked(cfg, tracked);
         if let Err(e) = self.do_start(cfg, tracked, false) {

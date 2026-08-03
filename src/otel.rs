@@ -152,6 +152,7 @@ fn collect_and_export(
     ));
 
     let mut restart_points = Vec::new();
+    let mut liveness_points = Vec::new();
     let mut uptime_points = Vec::new();
     let mut cpu_points = Vec::new();
     let mut mem_points = Vec::new();
@@ -159,6 +160,7 @@ fn collect_and_export(
     for svc in supervisor.metrics_snapshot() {
         let attrs = vec![("service", svc.name.as_str())];
         restart_points.push(sum_point(svc.restarts as f64, &attrs, ts));
+        liveness_points.push(sum_point(svc.liveness_failures as f64, &attrs, ts));
         uptime_points.push(gauge_point(svc.uptime_secs, &attrs, ts));
 
         if let Some(pid) = svc.pid {
@@ -174,6 +176,10 @@ fn collect_and_export(
     metrics.push(sum_metric(
         "microinit_service_restarts_total",
         restart_points,
+    ));
+    metrics.push(sum_metric(
+        "microinit_service_liveness_failures_total",
+        liveness_points,
     ));
     metrics.push(gauge_metric(
         "microinit_service_uptime_seconds",

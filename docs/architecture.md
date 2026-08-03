@@ -126,7 +126,7 @@ The metrics thread:
 - **does not block** the supervisor loop,  
 - sleeps **10 s** after start, then tries to push to the OTLP endpoint (default Alloy on port **4318** HTTP),  
 - retries every **30 s** on failure,  
-- exports service restarts, uptime, host CPU/RAM, and per-service CPU/RAM.
+- exports service restarts, livenessProbe failures, uptime, host CPU/RAM, and per-service CPU/RAM.
 
 **Model:** microinit **pushes** metrics (OTLP client). It does not expose a scrapeable Prometheus HTTP endpoint. Grafana Alloy receives OTLP and can forward to Prometheus / Mimir / Grafana Cloud.
 

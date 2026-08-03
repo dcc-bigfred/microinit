@@ -23,7 +23,7 @@ Default durable data lives under **`/data`**. You can point that elsewhere with 
 The control socket defaults to `/run/microinit.sock`. Override with `--socket` if needed.
 
 ```bash
-microinit list                          # name, state, pid, restarts, enabled
+microinit list                          # name, state, pid, restarts, enabled, live_fail
 microinit start redis
 microinit start --force alloy           # start even if dependsOn are not ready
 microinit stop redis
