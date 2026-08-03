@@ -18,7 +18,8 @@ path = "src/main.rs"
 [features]
 # OpenTelemetry (OTLP) is on by default; build without it via `--no-default-features`.
 default = ["otel"]
-otel = ["dep:ureq"]
+# OTel export; HTTP client (ureq) is always available for livenessProbe.httpUrl.
+otel = []
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -37,7 +38,7 @@ thiserror = "2"
 libc = "0.2"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 notify = "8.2.0"
-ureq = { version = "2.12", optional = true, default-features = false, features = ["json", "tls"] }
+ureq = { version = "2.12", default-features = false, features = ["json", "tls"] }
 
 [profile.release]
 opt-level = "z"

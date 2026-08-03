@@ -127,6 +127,39 @@ If `startCmd` is set, it is used instead of `cmd start`. Prefer **`exec` of the 
 | `background` | At boot, start in parallel (does not wait for the console `[ OK ]` sequence as long) |
 | `dependsOn` | Other service names that must be `running` or `succeeded` first |
 | `env` / `cwd` | Extra environment and working directory |
+| `livenessProbe` | Optional periodic check. Exactly one of `cmd`, `httpUrl`, or `tcpAddr`. Shared: `interval` (default `60`), `timeout` (default `5`). `cmd` uses `successExitCodes` (default `[0]`); `httpUrl` uses `httpMethod` (default `GET`) and `httpAcceptedCodes` (default `[200]`); `tcpAddr` is `host:port`. Runs while `running` / `succeeded` / `failed`; failure re-runs start |
+
+Example one-shot with recovery (network bring-up):
+
+```json
+{
+  "name": "network",
+  "daemon": false,
+  "cmd": "/etc/init.d/S15-network",
+  "livenessProbe": {
+    "cmd": "/usr/sbin/configure-ethernet check",
+    "successExitCodes": [0],
+    "interval": 30,
+    "timeout": 5
+  }
+}
+```
+
+HTTP / TCP examples:
+
+```json
+"livenessProbe": {
+  "httpUrl": "http://127.0.0.1:8428/health",
+  "httpMethod": "GET",
+  "httpAcceptedCodes": [200],
+  "interval": 30,
+  "timeout": 5
+}
+```
+
+```json
+"livenessProbe": { "tcpAddr": "127.0.0.1:6379", "interval": 15, "timeout": 3 }
+```
 
 ---
 

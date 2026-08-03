@@ -24,6 +24,7 @@ fn minimal_svc(name: &str) -> ServiceConfig {
         restart_cmd: None,
         env: HashMap::new(),
         cwd: "/".into(),
+        liveness_probe: None,
     }
 }
 
@@ -61,6 +62,7 @@ fn resolve_cmd_fallback() {
         restart_cmd: None,
         env: HashMap::new(),
         cwd: "/".into(),
+        liveness_probe: None,
     };
     assert_eq!(svc.resolve_start().unwrap(), "/etc/init.d/S30-redis start");
     assert_eq!(svc.resolve_stop().unwrap(), "/etc/init.d/S30-redis stop");
@@ -89,6 +91,7 @@ fn resolve_explicit_cmds_prefer_over_cmd() {
         restart_cmd: Some("restart-me".into()),
         env: HashMap::new(),
         cwd: "/".into(),
+        liveness_probe: None,
     };
     assert_eq!(svc.resolve_start().unwrap(), "start-me");
     assert_eq!(svc.resolve_stop().unwrap(), "stop-me");
@@ -114,6 +117,7 @@ fn resolve_restart_falls_back_to_stop_and_start() {
         restart_cmd: None,
         env: HashMap::new(),
         cwd: "/".into(),
+        liveness_probe: None,
     };
     assert_eq!(svc.resolve_restart().unwrap(), "do-stop && do-start");
 }
@@ -137,6 +141,7 @@ fn resolve_start_errors_without_cmds() {
         restart_cmd: None,
         env: HashMap::new(),
         cwd: "/".into(),
+        liveness_probe: None,
     };
     assert!(svc.resolve_start().is_err());
     assert!(svc.resolve_stop().is_err());
@@ -311,6 +316,114 @@ fn camel_case_json_fields() {
     assert_eq!(cfg.get("x").unwrap().shutdown_wait_secs, 7);
     assert_eq!(cfg.get("x").unwrap().success_exit_codes, vec![0, 3]);
     assert_eq!(cfg.get("x").unwrap().depends_on, vec!["y".to_string()]);
+}
+
+#[test]
+fn parses_liveness_probe_with_defaults() {
+    let raw = r#"{
+      "version": 1,
+      "services": [{
+        "name": "net",
+        "daemon": false,
+        "cmd": "/etc/init.d/S15-network",
+        "livenessProbe": {
+          "cmd": "/usr/sbin/configure-ethernet check"
+        }
+      }]
+    }"#;
+    let cfg: Config = serde_json::from_str(raw).unwrap();
+    cfg.validate().unwrap();
+    let probe = cfg.get("net").unwrap().liveness_probe.as_ref().unwrap();
+    assert_eq!(probe.cmd.as_deref(), Some("/usr/sbin/configure-ethernet check"));
+    assert_eq!(probe.success_exit_codes, vec![0]);
+    assert_eq!(probe.interval, 60);
+    assert_eq!(probe.timeout, 5);
+    assert_eq!(probe.http_method, "GET");
+    assert_eq!(probe.http_accepted_codes, vec![200]);
+}
+
+#[test]
+fn parses_http_and_tcp_liveness_probes() {
+    let http = r#"{
+      "version": 1,
+      "services": [{
+        "name": "api",
+        "cmd": "/bin/true",
+        "livenessProbe": {
+          "httpUrl": "http://127.0.0.1:8080/health",
+          "httpMethod": "HEAD",
+          "httpAcceptedCodes": [200, 204],
+          "interval": 10,
+          "timeout": 2
+        }
+      }]
+    }"#;
+    let cfg: Config = serde_json::from_str(http).unwrap();
+    cfg.validate().unwrap();
+    let p = cfg.get("api").unwrap().liveness_probe.as_ref().unwrap();
+    assert_eq!(p.http_url.as_deref(), Some("http://127.0.0.1:8080/health"));
+    assert_eq!(p.http_method, "HEAD");
+    assert_eq!(p.http_accepted_codes, vec![200, 204]);
+    assert!(p.cmd.is_none());
+
+    let tcp = r#"{
+      "version": 1,
+      "services": [{
+        "name": "redis",
+        "cmd": "/bin/true",
+        "livenessProbe": { "tcpAddr": "127.0.0.1:6379", "timeout": 3 }
+      }]
+    }"#;
+    let cfg: Config = serde_json::from_str(tcp).unwrap();
+    cfg.validate().unwrap();
+    assert_eq!(
+        cfg.get("redis")
+            .unwrap()
+            .liveness_probe
+            .as_ref()
+            .unwrap()
+            .tcp_addr
+            .as_deref(),
+        Some("127.0.0.1:6379")
+    );
+}
+
+#[test]
+fn rejects_empty_liveness_probe_cmd() {
+    let mut cfg = Config::default();
+    let mut svc = minimal_svc("net");
+    svc.daemon = false;
+    svc.restart = false;
+    svc.liveness_probe = Some(LivenessProbe {
+        cmd: Some("  ".into()),
+        http_url: None,
+        tcp_addr: None,
+        success_exit_codes: vec![0],
+        http_accepted_codes: vec![200],
+        http_method: "GET".into(),
+        interval: 30,
+        timeout: 5,
+    });
+    cfg.services.push(svc);
+    assert!(cfg.validate().is_err());
+}
+
+#[test]
+fn rejects_multiple_liveness_probe_kinds() {
+    let raw = r#"{
+      "version": 1,
+      "services": [{
+        "name": "x",
+        "cmd": "/bin/true",
+        "livenessProbe": {
+          "cmd": "true",
+          "tcpAddr": "127.0.0.1:1"
+        }
+      }]
+    }"#;
+    let cfg: Config = serde_json::from_str(raw).unwrap();
+    let err = cfg.validate().unwrap_err().to_string();
+    assert!(err.contains("exactly one"), "{err}");
 }
 
 #[test]

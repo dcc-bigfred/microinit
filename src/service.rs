@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::process::{Child, Command, Stdio};
+use std::time::Duration;
 
 use crate::config::ServiceConfig;
 use crate::constants::TERMINATE_POLL;
@@ -55,6 +56,53 @@ pub fn run_shell(
         .status()
         .map_err(|e| Error::Service(cfg.name.clone(), e.to_string()))?;
     Ok(status.code().unwrap_or(1))
+}
+
+/// Like [`run_shell`], but discard stdout/stderr (liveness probes must stay cheap/quiet).
+pub fn run_shell_quiet(cmd: &str, cfg: &ServiceConfig) -> Result<i32> {
+    let mut c = build_shell_command(cmd, cfg, &HashMap::new());
+    c.stdout(Stdio::null()).stderr(Stdio::null());
+    let status = c
+        .status()
+        .map_err(|e| Error::Service(cfg.name.clone(), e.to_string()))?;
+    Ok(status.code().unwrap_or(1))
+}
+
+/// Quiet shell command with a hard timeout; kills the process group on expiry.
+///
+/// Returns `Ok(None)` on timeout.
+pub fn run_shell_quiet_timeout(
+    cmd: &str,
+    cfg: &ServiceConfig,
+    timeout: Duration,
+) -> Result<Option<i32>> {
+    use std::thread;
+    use std::time::Instant;
+
+    let mut child = build_shell_command(cmd, cfg, &HashMap::new())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| Error::Service(cfg.name.clone(), e.to_string()))?;
+
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(Some(status.code().unwrap_or(1))),
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let pid = child.id() as i32;
+                    terminate_pid(nix::unistd::Pid::from_raw(pid), 0);
+                    let _ = child.wait();
+                    return Ok(None);
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => {
+                return Err(Error::Service(cfg.name.clone(), e.to_string()));
+            }
+        }
+    }
 }
 
 /// Kill a process with SIGTERM, wait `grace_secs`, then SIGKILL if still alive.

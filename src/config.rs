@@ -109,6 +109,71 @@ impl LogsConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+pub struct LivenessProbe {
+    /// Shell command; exit code must be in `success_exit_codes`. Mutually exclusive
+    /// with `http_url` / `tcp_addr`.
+    #[serde(default)]
+    pub cmd: Option<String>,
+    /// HTTP(S) URL to request. Mutually exclusive with `cmd` / `tcp_addr`.
+    #[serde(default)]
+    pub http_url: Option<String>,
+    /// `host:port` TCP connect check. Mutually exclusive with `cmd` / `http_url`.
+    #[serde(default)]
+    pub tcp_addr: Option<String>,
+    /// Accepted exit codes for `cmd` probes. Default `[0]`.
+    #[serde(default = "default_success_codes")]
+    pub success_exit_codes: Vec<i32>,
+    /// Accepted HTTP status codes for `httpUrl` probes. Default `[200]`.
+    #[serde(default = "default_http_accepted_codes")]
+    pub http_accepted_codes: Vec<u16>,
+    /// HTTP method for `httpUrl` probes. Default `GET`.
+    #[serde(default = "default_http_method")]
+    pub http_method: String,
+    /// Seconds between probes. Default 60.
+    #[serde(default = "default_liveness_interval")]
+    pub interval: u64,
+    /// Seconds before a probe attempt is aborted. Default 5.
+    #[serde(default = "default_liveness_timeout")]
+    pub timeout: u64,
+}
+
+fn default_liveness_interval() -> u64 {
+    60
+}
+
+fn default_liveness_timeout() -> u64 {
+    5
+}
+
+fn default_http_accepted_codes() -> Vec<u16> {
+    vec![200]
+}
+
+fn default_http_method() -> String {
+    "GET".into()
+}
+
+impl LivenessProbe {
+    #[must_use]
+    pub fn is_success(&self, code: i32) -> bool {
+        self.success_exit_codes.contains(&code)
+    }
+
+    fn non_empty(opt: &Option<String>) -> bool {
+        opt.as_deref().is_some_and(|s| !s.trim().is_empty())
+    }
+
+    /// How many of cmd / httpUrl / tcpAddr are set (non-empty).
+    #[must_use]
+    pub fn kind_count(&self) -> u32 {
+        u32::from(Self::non_empty(&self.cmd))
+            + u32::from(Self::non_empty(&self.http_url))
+            + u32::from(Self::non_empty(&self.tcp_addr))
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct ServiceConfig {
     pub name: String,
     #[serde(default = "default_true")]
@@ -144,6 +209,9 @@ pub struct ServiceConfig {
     pub env: HashMap<String, String>,
     #[serde(default = "default_cwd")]
     pub cwd: String,
+    /// Optional periodic health check; on failure the service is restarted.
+    #[serde(default)]
+    pub liveness_probe: Option<LivenessProbe>,
 }
 
 fn default_true() -> bool {
@@ -320,6 +388,46 @@ impl Config {
                     "service '{}': need startCmd or cmd",
                     svc.name
                 )));
+            }
+            if let Some(ref probe) = svc.liveness_probe {
+                if probe.kind_count() != 1 {
+                    return Err(Error::Config(format!(
+                        "service '{}': livenessProbe needs exactly one of cmd, httpUrl, tcpAddr",
+                        svc.name
+                    )));
+                }
+                if LivenessProbe::non_empty(&probe.cmd) && probe.success_exit_codes.is_empty() {
+                    return Err(Error::Config(format!(
+                        "service '{}': livenessProbe.successExitCodes must not be empty",
+                        svc.name
+                    )));
+                }
+                if LivenessProbe::non_empty(&probe.http_url) {
+                    if probe.http_accepted_codes.is_empty() {
+                        return Err(Error::Config(format!(
+                            "service '{}': livenessProbe.httpAcceptedCodes must not be empty",
+                            svc.name
+                        )));
+                    }
+                    if probe.http_method.trim().is_empty() {
+                        return Err(Error::Config(format!(
+                            "service '{}': livenessProbe.httpMethod must not be empty",
+                            svc.name
+                        )));
+                    }
+                }
+                if probe.interval == 0 {
+                    return Err(Error::Config(format!(
+                        "service '{}': livenessProbe.interval must be >= 1",
+                        svc.name
+                    )));
+                }
+                if probe.timeout == 0 {
+                    return Err(Error::Config(format!(
+                        "service '{}': livenessProbe.timeout must be >= 1",
+                        svc.name
+                    )));
+                }
             }
         }
         for svc in &self.services {
@@ -518,6 +626,16 @@ pub fn example_config() -> Config {
                 restart_cmd: None,
                 env: HashMap::new(),
                 cwd: "/".into(),
+                liveness_probe: Some(LivenessProbe {
+                    cmd: Some("/usr/sbin/configure-ethernet check".into()),
+                    http_url: None,
+                    tcp_addr: None,
+                    success_exit_codes: vec![0],
+                    http_accepted_codes: vec![200],
+                    http_method: "GET".into(),
+                    interval: 30,
+                    timeout: 5,
+                }),
             },
             ServiceConfig {
                 name: "redis".into(),
@@ -536,6 +654,7 @@ pub fn example_config() -> Config {
                 restart_cmd: None,
                 env: HashMap::new(),
                 cwd: "/".into(),
+                liveness_probe: None,
             },
             ServiceConfig {
                 name: "remote-icmp".into(),
@@ -557,6 +676,7 @@ pub fn example_config() -> Config {
                 restart_cmd: None,
                 env: HashMap::new(),
                 cwd: "/".into(),
+                liveness_probe: None,
             },
         ],
     }

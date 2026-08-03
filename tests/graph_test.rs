@@ -24,6 +24,7 @@ fn svc(name: &str, deps: &[&str], bg: bool) -> ServiceConfig {
         restart_cmd: None,
         env: HashMap::new(),
         cwd: "/".into(),
+        liveness_probe: None,
     }
 }
 

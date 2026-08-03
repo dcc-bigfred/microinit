@@ -43,6 +43,7 @@ fn job(name: &str, start: &str, deps: &[&str], enabled: bool) -> ServiceConfig {
         restart_cmd: None,
         env: HashMap::new(),
         cwd: "/".into(),
+        liveness_probe: None,
     }
 }
 
@@ -64,6 +65,7 @@ fn daemon_cfg(name: &str, start: &str) -> ServiceConfig {
         restart_cmd: None,
         env: HashMap::new(),
         cwd: "/".into(),
+        liveness_probe: None,
     }
 }
 
@@ -324,5 +326,61 @@ fn start_force_bypasses_waiting_for_dependency() {
         thread::sleep(Duration::from_millis(100));
     }
     assert_eq!(sup.status("child").unwrap().state, ServiceState::Succeeded);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn liveness_probe_restarts_oneshot_on_failure() {
+    use microinit::config::LivenessProbe;
+
+    let marker = std::env::temp_dir().join(format!(
+        "microinit-live-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_file(&marker);
+    let path = marker.to_string_lossy();
+    let start = format!("touch {path}");
+    let check = format!("test -f {path}");
+
+    let mut svc = job("net", &start, &[], true);
+    svc.liveness_probe = Some(LivenessProbe {
+        cmd: Some(check),
+        http_url: None,
+        tcp_addr: None,
+        success_exit_codes: vec![0],
+        http_accepted_codes: vec![200],
+        http_method: "GET".into(),
+        interval: 1,
+        timeout: 5,
+    });
+
+    let (sup, dir) = make_sup(vec![svc]);
+    sup.boot().unwrap();
+    assert_eq!(sup.status("net").unwrap().state, ServiceState::Succeeded);
+    assert!(marker.exists());
+
+    std::fs::remove_file(&marker).unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while std::time::Instant::now() < deadline {
+        let st = sup.status("net").unwrap();
+        if marker.exists()
+            && st.restarts >= 1
+            && matches!(st.state, ServiceState::Succeeded)
+        {
+            break;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    assert!(marker.exists(), "start should recreate marker after probe fail");
+    assert!(
+        sup.status("net").unwrap().restarts >= 1,
+        "expected at least one liveness restart"
+    );
+    assert_eq!(sup.status("net").unwrap().state, ServiceState::Succeeded);
+    let _ = std::fs::remove_file(&marker);
     let _ = std::fs::remove_dir_all(dir);
 }

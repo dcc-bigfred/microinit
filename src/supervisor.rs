@@ -23,6 +23,7 @@ use crate::graph::{partition_boot, shutdown_order};
 use crate::logs::{capture_stream, LogHub, INIT_SERVICE};
 use crate::protocol::{LogLevel, ServiceState, ServiceStatus};
 use crate::reaper::{ensure_reaper_thread, global_exits, ExitRegistry};
+use crate::liveness::{run_probe, ProbeResult};
 use crate::service::{run_shell, spawn_shell, terminate_pid};
 use crate::syncutil::mutex_lock;
 
@@ -564,6 +565,7 @@ impl Supervisor {
 
     fn monitor_loop(self: Arc<Self>, name: String, rx: std::sync::mpsc::Receiver<CtlMsg>) {
         let mut tracked: Option<i32> = None;
+        let mut next_liveness: Option<Instant> = None;
 
         loop {
             if self.shared.stop_all.load(Ordering::SeqCst) {
@@ -599,6 +601,7 @@ impl Supervisor {
                             .emit(INIT_SERVICE, LogLevel::Info, format!("stopping {name}"));
                         self.shared.set_state(&name, ServiceState::Stopping, None);
                         self.stop_tracked(&cfg, &mut tracked);
+                        next_liveness = None;
                         let enabled = self.shared.is_enabled(&name).unwrap_or(true);
                         if enabled {
                             self.shared.set_state(&name, ServiceState::Stopped, None);
@@ -615,6 +618,7 @@ impl Supervisor {
                             let code = run_shell(&restart, &cfg, &HashMap::new()).unwrap_or(1);
                             if cfg.daemon && cfg.is_success(code) {
                                 self.shared.set_state(&name, ServiceState::Running, None);
+                                next_liveness = Self::schedule_liveness(&cfg);
                                 continue;
                             }
                         }
@@ -623,6 +627,7 @@ impl Supervisor {
                                 .emit(INIT_SERVICE, LogLevel::Error, format!("{name}: {e}"));
                             self.shared.set_state(&name, ServiceState::Failed, None);
                         }
+                        next_liveness = Self::schedule_liveness(&cfg);
                         continue;
                     }
                     CtlMsg::Start { force } => {
@@ -634,6 +639,7 @@ impl Supervisor {
                                 .emit(INIT_SERVICE, LogLevel::Error, format!("{name}: {e}"));
                             self.shared.set_state(&name, ServiceState::Failed, None);
                         }
+                        next_liveness = Self::schedule_liveness(&cfg);
                         continue;
                     }
                 }
@@ -644,6 +650,7 @@ impl Supervisor {
                     tracked = None;
                     if let Ok(cfg) = self.service_cfg(&name) {
                         self.on_process_exit(&cfg, &mut tracked, code);
+                        next_liveness = Self::schedule_liveness(&cfg);
                     }
                 }
             } else if !self.shared.stop_all.load(Ordering::SeqCst) {
@@ -658,10 +665,99 @@ impl Supervisor {
                                 .emit(INIT_SERVICE, LogLevel::Error, format!("{name}: {e}"));
                             self.shared.set_state(&name, ServiceState::Failed, None);
                         }
+                        next_liveness = Self::schedule_liveness(&cfg);
                     }
                 }
             }
+
+            if !self.shared.stop_all.load(Ordering::SeqCst) {
+                if let Ok(cfg) = self.service_cfg(&name) {
+                    self.maybe_liveness(&cfg, &mut tracked, &mut next_liveness);
+                }
+            }
         }
+    }
+
+    fn schedule_liveness(cfg: &ServiceConfig) -> Option<Instant> {
+        cfg.liveness_probe
+            .as_ref()
+            .map(|p| Instant::now() + Duration::from_secs(p.interval))
+    }
+
+    /// Periodic health check: on failure, stop and re-run start.
+    fn maybe_liveness(
+        self: &Arc<Self>,
+        cfg: &ServiceConfig,
+        tracked: &mut Option<i32>,
+        next_liveness: &mut Option<Instant>,
+    ) {
+        let Some(probe) = cfg.liveness_probe.as_ref() else {
+            *next_liveness = None;
+            return;
+        };
+
+        let state = match self.shared.current_state(&cfg.name) {
+            Some(s) => s,
+            None => return,
+        };
+        if !matches!(
+            state,
+            ServiceState::Running | ServiceState::Succeeded | ServiceState::Failed
+        ) {
+            return;
+        }
+        if !self.shared.is_enabled(&cfg.name).unwrap_or(false) {
+            return;
+        }
+
+        let due = match *next_liveness {
+            Some(t) => Instant::now() >= t,
+            None => {
+                *next_liveness = Some(Instant::now() + Duration::from_secs(probe.interval));
+                false
+            }
+        };
+        if !due {
+            return;
+        }
+
+        let outcome = run_probe(probe, cfg);
+        *next_liveness = Some(Instant::now() + Duration::from_secs(probe.interval));
+
+        if outcome.is_ok() {
+            if matches!(state, ServiceState::Failed) && !cfg.daemon {
+                self.shared
+                    .set_state(&cfg.name, ServiceState::Succeeded, None);
+            }
+            return;
+        }
+
+        let reason = match outcome {
+            ProbeResult::Fail(r) => r,
+            ProbeResult::Ok => unreachable!(),
+        };
+        self.hub.emit(
+            INIT_SERVICE,
+            LogLevel::Warn,
+            format!(
+                "{}: livenessProbe failed ({reason}), restarting",
+                cfg.name
+            ),
+        );
+        self.shared
+            .set_state(&cfg.name, ServiceState::Restarting, None);
+        self.shared.bump_restarts(&cfg.name);
+        self.stop_tracked(cfg, tracked);
+        if let Err(e) = self.do_start(cfg, tracked, false) {
+            self.hub.emit(
+                INIT_SERVICE,
+                LogLevel::Error,
+                format!("{}: liveness restart: {e}", cfg.name),
+            );
+            self.shared
+                .set_state(&cfg.name, ServiceState::Failed, None);
+        }
+        *next_liveness = Self::schedule_liveness(cfg);
     }
 
     fn stop_tracked(&self, cfg: &ServiceConfig, tracked: &mut Option<i32>) {

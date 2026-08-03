@@ -23,6 +23,7 @@ fn cfg() -> ServiceConfig {
         restart_cmd: None,
         env: HashMap::new(),
         cwd: "/".into(),
+        liveness_probe: None,
     }
 }
 

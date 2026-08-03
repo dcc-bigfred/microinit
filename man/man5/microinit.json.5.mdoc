@@ -126,6 +126,44 @@ when specific cmds are null
 Explicit shell commands
 .It Cm env , cwd
 Environment and working directory
+.It Cm livenessProbe
+Optional object. Exactly one of
+.Cm cmd ,
+.Cm httpUrl ,
+or
+.Cm tcpAddr
+must be set.
+Shared fields:
+.Cm interval
+in seconds
+.Pq default 60
+and
+.Cm timeout
+in seconds
+.Pq default 5 .
+.Cm cmd
+uses
+.Cm successExitCodes
+.Pq default Bq 0 .
+.Cm httpUrl
+uses
+.Cm httpMethod
+.Pq default GET
+and
+.Cm httpAcceptedCodes
+.Pq default Bq 200 .
+.Cm tcpAddr
+is
+.Dq host:port
+and succeeds if the TCP connect works.
+While the service is
+.Cm running ,
+.Cm succeeded ,
+or
+.Cm failed ,
+microinit probes every
+.Cm interval
+seconds; failure re-runs start.
 .El
 .Sh EXAMPLES
 See
