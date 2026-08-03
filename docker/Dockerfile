@@ -7,7 +7,7 @@
 #   docker buildx build --platform linux/amd64,linux/arm64 \
 #     -f docker/Dockerfile -t ghcr.io/dcc-bigfred/microinit:main --push .
 
-FROM --platform=$BUILDPLATFORM gcr.io/distroless/static-debian12:nonroot AS base
+FROM gcr.io/distroless/static-debian12:nonroot
 
 ARG TARGETARCH
 COPY dist/microinit-linux-${TARGETARCH} /microinit

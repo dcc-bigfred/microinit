@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Build and push multiarch distroless image ghcr.io/dcc-bigfred/microinit.
-# Requires: dist/microinit-linux-amd64, dist/microinit-linux-arm64, docker buildx.
+# Requires: dist/microinit-linux-amd64, dist/microinit-linux-arm64 (or paths as args),
+# docker buildx.
 # Tags: main, sha-<7>
 set -euo pipefail
 
@@ -18,10 +19,19 @@ for f in "${AMD64}" "${ARM64}"; do
   fi
 done
 
-# Dockerfile expects dist/microinit-linux-${TARGETARCH}
-mkdir -p dist
-cp -f "${AMD64}" dist/microinit-linux-amd64
-cp -f "${ARM64}" dist/microinit-linux-arm64
+# Dockerfile expects dist/microinit-linux-${TARGETARCH}. Skip copy when already there.
+stage_into_dist() {
+  local src="$1"
+  local dest="$2"
+  mkdir -p "$(dirname "${dest}")"
+  if [[ "$(realpath "${src}")" == "$(realpath -m "${dest}")" ]]; then
+    return 0
+  fi
+  cp -f "${src}" "${dest}"
+}
+
+stage_into_dist "${AMD64}" dist/microinit-linux-amd64
+stage_into_dist "${ARM64}" dist/microinit-linux-arm64
 chmod 755 dist/microinit-linux-amd64 dist/microinit-linux-arm64
 
 BRANCH="${GITHUB_REF_NAME:?GITHUB_REF_NAME required}"
