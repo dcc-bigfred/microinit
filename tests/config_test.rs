@@ -1,0 +1,314 @@
+//! Unit/integration tests for microinit::config
+
+use std::collections::HashMap;
+use std::fs;
+use std::path::PathBuf;
+
+use microinit::config::*;
+
+fn minimal_svc(name: &str) -> ServiceConfig {
+    ServiceConfig {
+        name: name.into(),
+        enabled: true,
+        daemon: true,
+        restart: false,
+        restart_backoff: 2,
+        success_exit_codes: vec![0],
+        start_wait_secs: 0,
+        shutdown_wait_secs: 5,
+        background: false,
+        depends_on: vec![],
+        cmd: Some(format!("/bin/echo-{name}")),
+        start_cmd: None,
+        stop_cmd: None,
+        restart_cmd: None,
+        env: HashMap::new(),
+        cwd: "/".into(),
+    }
+}
+
+fn temp_dir(label: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "microinit-cfg-{}-{}-{}",
+        label,
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+#[test]
+fn resolve_cmd_fallback() {
+    let svc = ServiceConfig {
+        name: "x".into(),
+        enabled: true,
+        daemon: true,
+        restart: false,
+        restart_backoff: 2,
+        success_exit_codes: vec![0],
+        start_wait_secs: 0,
+        shutdown_wait_secs: 5,
+        background: false,
+        depends_on: vec![],
+        cmd: Some("/etc/init.d/S30-redis".into()),
+        start_cmd: None,
+        stop_cmd: None,
+        restart_cmd: None,
+        env: HashMap::new(),
+        cwd: "/".into(),
+    };
+    assert_eq!(svc.resolve_start().unwrap(), "/etc/init.d/S30-redis start");
+    assert_eq!(svc.resolve_stop().unwrap(), "/etc/init.d/S30-redis stop");
+    assert_eq!(
+        svc.resolve_restart().unwrap(),
+        "/etc/init.d/S30-redis restart"
+    );
+}
+
+#[test]
+fn resolve_explicit_cmds_prefer_over_cmd() {
+    let svc = ServiceConfig {
+        name: "x".into(),
+        enabled: true,
+        daemon: true,
+        restart: false,
+        restart_backoff: 2,
+        success_exit_codes: vec![0],
+        start_wait_secs: 0,
+        shutdown_wait_secs: 5,
+        background: false,
+        depends_on: vec![],
+        cmd: Some("/ignored".into()),
+        start_cmd: Some("start-me".into()),
+        stop_cmd: Some("stop-me".into()),
+        restart_cmd: Some("restart-me".into()),
+        env: HashMap::new(),
+        cwd: "/".into(),
+    };
+    assert_eq!(svc.resolve_start().unwrap(), "start-me");
+    assert_eq!(svc.resolve_stop().unwrap(), "stop-me");
+    assert_eq!(svc.resolve_restart().unwrap(), "restart-me");
+}
+
+#[test]
+fn resolve_restart_falls_back_to_stop_and_start() {
+    let svc = ServiceConfig {
+        name: "x".into(),
+        enabled: true,
+        daemon: true,
+        restart: false,
+        restart_backoff: 2,
+        success_exit_codes: vec![0],
+        start_wait_secs: 0,
+        shutdown_wait_secs: 5,
+        background: false,
+        depends_on: vec![],
+        cmd: None,
+        start_cmd: Some("do-start".into()),
+        stop_cmd: Some("do-stop".into()),
+        restart_cmd: None,
+        env: HashMap::new(),
+        cwd: "/".into(),
+    };
+    assert_eq!(svc.resolve_restart().unwrap(), "do-stop && do-start");
+}
+
+#[test]
+fn resolve_start_errors_without_cmds() {
+    let svc = ServiceConfig {
+        name: "x".into(),
+        enabled: true,
+        daemon: true,
+        restart: false,
+        restart_backoff: 2,
+        success_exit_codes: vec![0],
+        start_wait_secs: 0,
+        shutdown_wait_secs: 5,
+        background: false,
+        depends_on: vec![],
+        cmd: None,
+        start_cmd: None,
+        stop_cmd: None,
+        restart_cmd: None,
+        env: HashMap::new(),
+        cwd: "/".into(),
+    };
+    assert!(svc.resolve_start().is_err());
+    assert!(svc.resolve_stop().is_err());
+}
+
+#[test]
+fn is_success_custom_codes() {
+    let mut svc = minimal_svc("x");
+    svc.success_exit_codes = vec![0, 2];
+    assert!(svc.is_success(0));
+    assert!(svc.is_success(2));
+    assert!(!svc.is_success(1));
+}
+
+#[test]
+fn example_validates() {
+    let cfg = example_config();
+    cfg.validate().unwrap();
+}
+
+#[test]
+fn validate_rejects_empty_name() {
+    let mut cfg = Config::default();
+    let mut s = minimal_svc("ok");
+    s.name = String::new();
+    cfg.services.push(s);
+    assert!(cfg.validate().is_err());
+}
+
+#[test]
+fn validate_rejects_duplicate() {
+    let mut cfg = Config::default();
+    cfg.services.push(minimal_svc("a"));
+    cfg.services.push(minimal_svc("a"));
+    assert!(cfg.validate().is_err());
+}
+
+#[test]
+fn validate_rejects_restart_without_daemon() {
+    let mut cfg = Config::default();
+    let mut s = minimal_svc("job");
+    s.daemon = false;
+    s.restart = true;
+    cfg.services.push(s);
+    assert!(cfg.validate().is_err());
+}
+
+#[test]
+fn validate_rejects_missing_cmd() {
+    let mut cfg = Config::default();
+    let mut s = minimal_svc("x");
+    s.cmd = None;
+    s.start_cmd = None;
+    cfg.services.push(s);
+    assert!(cfg.validate().is_err());
+}
+
+#[test]
+fn validate_rejects_unknown_dependency() {
+    let mut cfg = Config::default();
+    let mut s = minimal_svc("a");
+    s.depends_on = vec!["missing".into()];
+    cfg.services.push(s);
+    assert!(cfg.validate().is_err());
+}
+
+#[test]
+fn defaults_from_partial_json() {
+    let raw = r#"{"services":[{"name":"n","cmd":"/bin/true"}]}"#;
+    let cfg: Config = serde_json::from_str(raw).unwrap();
+    cfg.validate().unwrap();
+    assert!(cfg.services[0].enabled);
+    assert!(cfg.services[0].daemon);
+    assert_eq!(cfg.services[0].restart_backoff, 2);
+    assert_eq!(cfg.services[0].start_wait_secs, 0);
+    assert_eq!(cfg.services[0].shutdown_wait_secs, 5);
+    assert_eq!(cfg.logs.lines, DEFAULT_LOG_LINES);
+    assert!(!cfg.logs.log_to_files);
+    assert!(cfg.logs.effective_log_dir().is_none());
+    assert_eq!(cfg.socket, DEFAULT_SOCKET);
+}
+
+#[test]
+fn log_to_files_enables_effective_dir() {
+    let mut logs = LogsConfig::default();
+    assert!(!logs.log_to_files);
+    assert!(logs.effective_log_dir().is_none());
+    logs.log_to_files = true;
+    let dir = logs.effective_log_dir().unwrap();
+    assert!(dir.ends_with("logs"));
+}
+
+#[test]
+fn override_merge() {
+    let mut cfg = example_config();
+    let mut map = HashMap::new();
+    map.insert("redis".into(), false);
+    apply_enabled_override(&mut cfg, &map);
+    assert!(!cfg.get("redis").unwrap().enabled);
+    assert!(cfg.get("network").unwrap().enabled);
+}
+
+#[test]
+fn override_roundtrip() {
+    let dir = temp_dir("ov");
+    let path = dir.join("enabled-override.json");
+    assert!(load_override(&path).unwrap().is_empty());
+    let mut map = HashMap::new();
+    map.insert("dropbear".into(), false);
+    save_override(&path, &map).unwrap();
+    let loaded = load_override(&path).unwrap();
+    assert_eq!(loaded.get("dropbear"), Some(&false));
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn roundtrip_json() {
+    let dir = temp_dir("rt");
+    let path = dir.join("microinit.json");
+    let cfg = example_config();
+    save_config(&path, &cfg).unwrap();
+    let loaded = load_config(&path).unwrap();
+    assert_eq!(loaded.services.len(), 3);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn load_or_create_writes_defaults_and_example() {
+    let dir = temp_dir("loc");
+    let config = dir.join("microinit.json");
+    let example = dir.join("microinit.json.example");
+    let override_f = dir.join("override.json");
+    let cfg = load_or_create(&config, &example, &override_f).unwrap();
+    assert!(config.is_file());
+    assert!(example.is_file());
+    assert!(cfg.services.is_empty()); // default config has empty services
+    assert!(!override_f.exists()); // lazy
+
+    // Second call with override applied
+    let mut map = HashMap::new();
+    // empty services — write example as config then override
+    save_config(&config, &example_config()).unwrap();
+    map.insert("redis".into(), false);
+    save_override(&override_f, &map).unwrap();
+    let cfg2 = load_or_create(&config, &example, &override_f).unwrap();
+    assert!(!cfg2.get("redis").unwrap().enabled);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn camel_case_json_fields() {
+    let raw = r#"{
+      "version": 1,
+      "services": [{
+        "name": "x",
+        "restartBackoff": 9,
+        "startWaitSecs": 3,
+        "shutdownWaitSecs": 7,
+        "successExitCodes": [0, 3],
+        "dependsOn": ["y"],
+        "startCmd": "echo hi",
+        "stopCmd": "true"
+      }, {
+        "name": "y",
+        "cmd": "/bin/true"
+      }]
+    }"#;
+    let cfg: Config = serde_json::from_str(raw).unwrap();
+    cfg.validate().unwrap();
+    assert_eq!(cfg.get("x").unwrap().restart_backoff, 9);
+    assert_eq!(cfg.get("x").unwrap().start_wait_secs, 3);
+    assert_eq!(cfg.get("x").unwrap().shutdown_wait_secs, 7);
+    assert_eq!(cfg.get("x").unwrap().success_exit_codes, vec![0, 3]);
+    assert_eq!(cfg.get("x").unwrap().depends_on, vec!["y".to_string()]);
+}

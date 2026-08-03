@@ -1,0 +1,153 @@
+.Dd August 3, 2026
+.Dt MICROINIT 8
+.Os "BigFred OS"
+.Sh NAME
+.Nm microinit
+.Nd system init and service supervisor for BigFred OS
+.Sh SYNOPSIS
+.Nm
+.Cm init
+.Op Fl -logs-tty Ns = Ns Ar path
+.Op Fl -init-logs-tty Ns = Ns Ar path
+.Op Fl -console Ns = Ns Ar path
+.Op Fl -config Ns = Ns Ar path
+.Op Fl -no-early-boot
+.Op Fl -allow-no-early-boot
+.Op Fl -log-to-files
+.Nm
+.Cm start|stop|restart|enable|disable
+.Ar name
+.Nm
+.Cm list
+.Nm
+.Cm logs
+.Op Ar name
+.Op Fl -follow
+.Op Fl -lines Ns = Ns Ar N
+.Sh DESCRIPTION
+.Nm
+is a PID 1 init system that loads a declarative JSON service list, starts
+services (foreground sequentially, background in parallel), supervises
+daemons with optional restart/backoff, and exposes a Unix-socket control
+API used by the same binary's management subcommands.
+.Pp
+When invoked as
+.Pa /sbin/init
+or as PID 1 without a subcommand,
+.Nm
+automatically enters
+.Cm init
+mode.
+.Ss Boot sequence
+.Bl -enum
+.It
+Run early-boot script
+.Xr early-boot.sh 8
+.Pq on-disk override/base, else embedded portable script
+.It
+Create or load
+.Xr microinit.json 5
+and apply
+.Xr microinit.services.enabled-override.json 5
+.It
+Topologically sort services by
+.Cm dependsOn
+.It
+Start enabled services; print
+.Bq OK
+/
+.Bq FAIL
+on the console
+.It
+Write microinit operational logs to the init-logs TTY
+.Pq default Pa /dev/tty3
+.It
+Respawn getty on the console TTY
+.It
+Supervise processes, reap zombies, serve IPC
+.El
+.Pp
+TTY roles:
+.Bl -bullet
+.It
+.Pa /dev/tty1
+.Pq Fl -console
+— boot status
+.Bq OK
+/
+.Bq FAIL
+and login getty
+.It
+.Pa /dev/tty2
+.Pq Fl -logs-tty
+— mixed service stdout/stderr
+.It
+.Pa /dev/tty3
+.Pq Fl -init-logs-tty
+— microinit's own runtime log
+.Pq start/stop/restart/enable, crashes, IPC actions
+; survives login on the console
+.El
+.Pp
+All lines are kept in fixed-capacity in-memory ring buffers
+.Pq Cm logs.lines
+and are available via
+.Cm microinit logs .
+File append under
+.Cm logs.dir
+is off by default
+.Pq Cm logs.logToFiles false
+; enable with
+.Fl -log-to-files
+or
+.Cm logs.logToFiles true .
+.Pp
+During boot, operational messages are written both to the console/stderr and to
+.Fl -init-logs-tty .
+After
+.Dq boot complete ,
+lifecycle events
+.Pq Cm start , Cm stop , Cm restart , enable/disable, crash restarts
+appear only on
+.Fl -init-logs-tty
+so the login console stays clean.
+.Sh SIGNALS
+.Bl -tag -width SIGTERM
+.It Dv SIGTERM , SIGINT
+Ordered shutdown then reboot
+.It Dv SIGUSR1
+Halt
+.It Dv SIGUSR2
+Power off
+.It Dv SIGCHLD
+Reap exited children
+.El
+.Sh FILES
+.Bl -tag -width /data/etc/microinit.services.enabled-override.json
+.It Pa /data/etc/microinit.json
+Main configuration
+.It Pa /data/etc/microinit.json.example
+Example configuration written on first boot
+.It Pa /data/etc/microinit.services.enabled-override.json
+Per-service
+.Cm enabled
+overrides
+.It Pa /etc/microinit/early-boot.sh
+Early-boot script
+.It Pa /data/etc/microinit/early-boot.sh
+Optional early-boot override
+.It Pa /run/microinit.sock
+Control socket
+.El
+.Sh EXAMPLES
+.Bd -literal
+microinit init --logs-tty=/dev/tty2 --init-logs-tty=/dev/tty3
+microinit list
+microinit restart redis
+microinit logs alloy --follow
+microinit disable dropbear
+.Ed
+.Sh SEE ALSO
+.Xr microinit.json 5 ,
+.Xr microinit.services.enabled-override.json 5 ,
+.Xr early-boot.sh 8

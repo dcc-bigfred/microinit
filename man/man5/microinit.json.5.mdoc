@@ -1,0 +1,101 @@
+.Dd August 3, 2026
+.Dt MICROINIT.JSON 5
+.Os "BigFred OS"
+.Sh NAME
+.Nm microinit.json
+.Nd service configuration for microinit
+.Sh SYNOPSIS
+.Pa /data/etc/microinit.json
+.Sh DESCRIPTION
+JSON configuration loaded by
+.Xr microinit 8
+after early-boot.
+Created automatically if missing
+.Pq empty services list
+together with
+.Pa microinit.json.example .
+.Ss Top-level fields
+.Bl -tag -width restartBackoff
+.It Cm version
+Config schema version (currently 1)
+.It Cm logs.tty
+TTY for mixed service logs (default
+.Pa /dev/tty2 )
+.It Cm logs.initTty
+TTY for microinit operational logs (default
+.Pa /dev/tty3 )
+.It Cm logs.lines
+Ring-buffer capacity in memory (default 300)
+.It Cm logs.logToFiles
+If true, append lines to per-service files under
+.Cm logs.dir
+.Pq default false ;
+also enabled by
+.Nm microinit Cm init Fl -log-to-files
+.Pq keeps RAM + TTY only on read-only / embedded roots when false
+.It Cm logs.dir
+Directory for per-service
+.Pa .log
+files when
+.Cm logs.logToFiles
+is true (default
+.Pa /data/logs )
+.It Cm socket
+Unix control socket path
+.It Cm console
+Console TTY for status and getty
+.It Cm services
+Array of service objects
+.El
+.Ss Service fields
+.Bl -tag -width successExitCodes
+.It Cm name
+Unique identifier
+.It Cm enabled
+If false, skipped at boot; start/restart refused (default true)
+.It Cm daemon
+Long-lived process if true; one-shot job if false
+.It Cm restart
+Restart on crash when daemon (default false)
+.It Cm restartBackoff
+Seconds between restarts (default 2)
+.It Cm successExitCodes
+Exit codes treated as success (default
+.Bq 0 )
+.It Cm startWaitSecs
+For
+.Cm daemon
+services: seconds to wait after start before deciding
+.Dq Running
+vs
+.Dq Failed
+.Pq default 0 .
+If the process exits during this window, start is treated as failed
+.Pq even with a success exit code .
+When 0, a short SysV daemonize grace applies and a success exit is treated as
+.Dq Running
+.Pq forked daemon script .
+.It Cm shutdownWaitSecs
+Seconds to wait after stop signal / stopCmd before sending
+.Dv SIGKILL
+.Pq default 5
+.It Cm background
+Start in parallel; does not block boot (default false)
+.It Cm dependsOn
+Services that must be settled first
+.It Cm cmd
+Base command; used as
+.Dq cmd start|stop|restart
+when specific cmds are null
+.It Cm startCmd , stopCmd , restartCmd
+Explicit shell commands
+.It Cm env , cwd
+Environment and working directory
+.El
+.Sh EXAMPLES
+See
+.Pa /data/etc/microinit.json.example
+written on first boot.
+.Sh SEE ALSO
+.Xr microinit 8 ,
+.Xr microinit.services.enabled-override.json 5

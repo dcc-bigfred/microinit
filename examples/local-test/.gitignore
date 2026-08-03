@@ -1,0 +1,7 @@
+# Generated / runtime artifacts for the local harness
+/data/etc/microinit.json
+/data/etc/microinit.json.example
+/data/etc/microinit.services.enabled-override.json
+/data/run/microinit.sock
+/data/logs/*
+!/data/logs/.gitkeep

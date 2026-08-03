@@ -1,0 +1,455 @@
+//! Configuration model and load/save for microinit.json + enabled override.
+
+use std::collections::HashMap;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
+
+use crate::error::{Error, Result};
+
+pub const DEFAULT_SOCKET: &str = "/run/microinit.sock";
+pub const DEFAULT_CONSOLE: &str = "/dev/tty1";
+pub const DEFAULT_LOGS_TTY: &str = "/dev/tty2";
+pub const DEFAULT_INIT_LOGS_TTY: &str = "/dev/tty3";
+pub const DEFAULT_LOG_LINES: usize = 300;
+pub const DEFAULT_EARLY_BOOT: &str = "/etc/microinit/early-boot.sh";
+
+/// Hub-default config path (`/data/etc/...` when data root is unset).
+/// Prefer [`default_config_path`] which honors `BIGFRED_DATA_DIR` / `DATA_DIR`.
+pub const DEFAULT_CONFIG_PATH: &str = "/data/etc/microinit.json";
+
+#[must_use]
+pub fn default_config_path() -> PathBuf {
+    crate::datadir::path(["etc", "microinit.json"])
+}
+
+#[must_use]
+pub fn default_example_path() -> PathBuf {
+    crate::datadir::path(["etc", "microinit.json.example"])
+}
+
+#[must_use]
+pub fn default_override_path() -> PathBuf {
+    crate::datadir::path(["etc", "microinit.services.enabled-override.json"])
+}
+
+#[must_use]
+pub fn default_early_boot_override_path() -> PathBuf {
+    crate::datadir::path(["etc", "microinit", "early-boot.sh"])
+}
+
+#[must_use]
+pub fn default_logs_dir() -> PathBuf {
+    crate::datadir::path(["logs"])
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogsConfig {
+    #[serde(default = "default_logs_tty")]
+    pub tty: String,
+    /// TTY for microinit's own operational logs (start/stop/restart, errors).
+    #[serde(default = "default_init_logs_tty")]
+    pub init_tty: String,
+    #[serde(default = "default_log_lines")]
+    pub lines: usize,
+    /// Directory for per-service `.log` files when [`Self::log_to_files`] is true.
+    #[serde(default = "default_logs_dir_opt")]
+    pub dir: Option<String>,
+    /// Persist ring-buffer lines to `dir/<service>.log`. Default false (RAM + TTY only),
+    /// suitable for embedded systems without a writable filesystem.
+    #[serde(default)]
+    pub log_to_files: bool,
+}
+
+fn default_logs_tty() -> String {
+    DEFAULT_LOGS_TTY.to_string()
+}
+
+fn default_init_logs_tty() -> String {
+    DEFAULT_INIT_LOGS_TTY.to_string()
+}
+
+fn default_log_lines() -> usize {
+    DEFAULT_LOG_LINES
+}
+
+fn default_logs_dir_opt() -> Option<String> {
+    Some(default_logs_dir().display().to_string())
+}
+
+impl Default for LogsConfig {
+    fn default() -> Self {
+        Self {
+            tty: default_logs_tty(),
+            init_tty: default_init_logs_tty(),
+            lines: default_log_lines(),
+            dir: default_logs_dir_opt(),
+            log_to_files: false,
+        }
+    }
+}
+
+impl LogsConfig {
+    /// Directory used for file sinks, or `None` when file logging is disabled / unset.
+    #[must_use]
+    pub fn effective_log_dir(&self) -> Option<std::path::PathBuf> {
+        if !self.log_to_files {
+            return None;
+        }
+        self.dir.as_ref().map(std::path::PathBuf::from)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceConfig {
+    pub name: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_true")]
+    pub daemon: bool,
+    #[serde(default)]
+    pub restart: bool,
+    #[serde(default = "default_backoff")]
+    pub restart_backoff: u64,
+    #[serde(default = "default_success_codes")]
+    pub success_exit_codes: Vec<i32>,
+    /// After starting a daemon, wait this many seconds before deciding Running/Failed.
+    /// Allows catching early crashes. Default 0 (only a short SysV daemonize grace).
+    #[serde(default)]
+    pub start_wait_secs: u64,
+    /// After stop signal / stopCmd, wait this many seconds before SIGKILL. Default 5.
+    #[serde(default = "default_shutdown_wait")]
+    pub shutdown_wait_secs: u64,
+    #[serde(default)]
+    pub background: bool,
+    #[serde(default)]
+    pub depends_on: Vec<String>,
+    #[serde(default)]
+    pub cmd: Option<String>,
+    #[serde(default)]
+    pub start_cmd: Option<String>,
+    #[serde(default)]
+    pub stop_cmd: Option<String>,
+    #[serde(default)]
+    pub restart_cmd: Option<String>,
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+    #[serde(default = "default_cwd")]
+    pub cwd: String,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_backoff() -> u64 {
+    2
+}
+
+fn default_success_codes() -> Vec<i32> {
+    vec![0]
+}
+
+fn default_shutdown_wait() -> u64 {
+    5
+}
+
+fn default_cwd() -> String {
+    "/".to_string()
+}
+
+impl ServiceConfig {
+    /// Resolve start command: startCmd or `cmd start`.
+    pub fn resolve_start(&self) -> Result<String> {
+        if let Some(c) = &self.start_cmd {
+            return Ok(c.clone());
+        }
+        self.cmd
+            .as_ref()
+            .map(|c| format!("{c} start"))
+            .ok_or_else(|| Error::Service(self.name.clone(), "no startCmd or cmd defined".into()))
+    }
+
+    pub fn resolve_stop(&self) -> Result<String> {
+        if let Some(c) = &self.stop_cmd {
+            return Ok(c.clone());
+        }
+        self.cmd
+            .as_ref()
+            .map(|c| format!("{c} stop"))
+            .ok_or_else(|| Error::Service(self.name.clone(), "no stopCmd or cmd defined".into()))
+    }
+
+    pub fn resolve_restart(&self) -> Result<String> {
+        if let Some(c) = &self.restart_cmd {
+            return Ok(c.clone());
+        }
+        if let Some(c) = &self.cmd {
+            return Ok(format!("{c} restart"));
+        }
+        // Fall back to stop then start
+        Ok(format!(
+            "{} && {}",
+            self.resolve_stop()?,
+            self.resolve_start()?
+        ))
+    }
+
+    pub fn is_success(&self, code: i32) -> bool {
+        self.success_exit_codes.contains(&code)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Config {
+    #[serde(default = "default_version")]
+    pub version: u32,
+    #[serde(default)]
+    pub logs: LogsConfig,
+    #[serde(default = "default_socket")]
+    pub socket: String,
+    #[serde(default = "default_console")]
+    pub console: String,
+    #[serde(default)]
+    pub services: Vec<ServiceConfig>,
+}
+
+fn default_version() -> u32 {
+    1
+}
+
+fn default_socket() -> String {
+    DEFAULT_SOCKET.to_string()
+}
+
+fn default_console() -> String {
+    DEFAULT_CONSOLE.to_string()
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            version: 1,
+            logs: LogsConfig::default(),
+            socket: default_socket(),
+            console: default_console(),
+            services: Vec::new(),
+        }
+    }
+}
+
+impl Config {
+    pub fn validate(&self) -> Result<()> {
+        let mut names = std::collections::HashSet::new();
+        for svc in &self.services {
+            if svc.name.is_empty() {
+                return Err(Error::Config("service with empty name".into()));
+            }
+            if !names.insert(svc.name.clone()) {
+                return Err(Error::Config(format!(
+                    "duplicate service name '{}'",
+                    svc.name
+                )));
+            }
+            if svc.restart && !svc.daemon {
+                return Err(Error::Config(format!(
+                    "service '{}': restart=true requires daemon=true",
+                    svc.name
+                )));
+            }
+            if svc.start_cmd.is_none() && svc.cmd.is_none() {
+                return Err(Error::Config(format!(
+                    "service '{}': need startCmd or cmd",
+                    svc.name
+                )));
+            }
+        }
+        for svc in &self.services {
+            for dep in &svc.depends_on {
+                if !names.contains(dep) {
+                    return Err(Error::Config(format!(
+                        "service '{}': dependsOn unknown service '{}'",
+                        svc.name, dep
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn get_mut(&mut self, name: &str) -> Option<&mut ServiceConfig> {
+        self.services.iter_mut().find(|s| s.name == name)
+    }
+
+    pub fn get(&self, name: &str) -> Option<&ServiceConfig> {
+        self.services.iter().find(|s| s.name == name)
+    }
+}
+
+/// Merge enabled overrides onto config (in place).
+pub fn apply_enabled_override(cfg: &mut Config, override_map: &HashMap<String, bool>) {
+    for svc in &mut cfg.services {
+        if let Some(&enabled) = override_map.get(&svc.name) {
+            svc.enabled = enabled;
+        }
+    }
+}
+
+pub fn load_override(path: &Path) -> Result<HashMap<String, bool>> {
+    if !path.exists() {
+        return Ok(HashMap::new());
+    }
+    let data = fs::read_to_string(path)?;
+    let map: HashMap<String, bool> = serde_json::from_str(&data)?;
+    Ok(map)
+}
+
+pub fn save_override(path: &Path, map: &HashMap<String, bool>) -> Result<()> {
+    write_json_atomic(path, map)
+}
+
+pub fn load_config(path: &Path) -> Result<Config> {
+    let data = fs::read_to_string(path)?;
+    let cfg: Config = serde_json::from_str(&data)?;
+    cfg.validate()?;
+    Ok(cfg)
+}
+
+pub fn save_config(path: &Path, cfg: &Config) -> Result<()> {
+    write_json_atomic(path, cfg)
+}
+
+fn write_json_atomic(path: &Path, value: &impl Serialize) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let tmp = path.with_extension("json.tmp");
+    let data = serde_json::to_string_pretty(value)?;
+    fs::write(&tmp, format!("{data}\n"))?;
+    fs::rename(&tmp, path)?;
+    Ok(())
+}
+
+/// Ensure config directory + default config + example exist; load and apply override.
+pub fn load_or_create(
+    config_path: &Path,
+    example_path: &Path,
+    override_path: &Path,
+) -> Result<Config> {
+    if let Some(parent) = config_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    if !example_path.exists() {
+        save_config(example_path, &example_config())?;
+    }
+
+    if !config_path.exists() {
+        save_config(config_path, &Config::default())?;
+    }
+
+    let mut cfg = load_config(config_path)?;
+    let ov = load_override(override_path)?;
+    apply_enabled_override(&mut cfg, &ov);
+    Ok(cfg)
+}
+
+pub fn example_config() -> Config {
+    Config {
+        version: 1,
+        logs: LogsConfig {
+            tty: DEFAULT_LOGS_TTY.to_string(),
+            init_tty: DEFAULT_INIT_LOGS_TTY.to_string(),
+            lines: DEFAULT_LOG_LINES,
+            dir: Some(default_logs_dir().display().to_string()),
+            log_to_files: false,
+        },
+        socket: DEFAULT_SOCKET.to_string(),
+        console: DEFAULT_CONSOLE.to_string(),
+        services: vec![
+            ServiceConfig {
+                name: "network".into(),
+                enabled: true,
+                daemon: false,
+                restart: false,
+                restart_backoff: 2,
+                success_exit_codes: vec![0],
+                start_wait_secs: 0,
+                shutdown_wait_secs: 5,
+                background: false,
+                depends_on: vec![],
+                cmd: Some("/etc/init.d/S15-network".into()),
+                start_cmd: None,
+                stop_cmd: None,
+                restart_cmd: None,
+                env: HashMap::new(),
+                cwd: "/".into(),
+            },
+            ServiceConfig {
+                name: "redis".into(),
+                enabled: true,
+                daemon: true,
+                restart: true,
+                restart_backoff: 2,
+                success_exit_codes: vec![0],
+                start_wait_secs: 0,
+                shutdown_wait_secs: 5,
+                background: false,
+                depends_on: vec!["network".into()],
+                cmd: Some("/etc/init.d/S30-redis".into()),
+                start_cmd: None,
+                stop_cmd: None,
+                restart_cmd: None,
+                env: HashMap::new(),
+                cwd: "/".into(),
+            },
+            ServiceConfig {
+                name: "remote-icmp".into(),
+                enabled: true,
+                daemon: true,
+                restart: true,
+                restart_backoff: 5,
+                success_exit_codes: vec![0],
+                start_wait_secs: 0,
+                shutdown_wait_secs: 5,
+                background: true,
+                depends_on: vec!["network".into()],
+                cmd: None,
+                start_cmd: Some(format!(
+                    "/usr/bin/bigfred-remote-icmp --config {}/etc/loco-server.conf",
+                    crate::datadir::root().display()
+                )),
+                stop_cmd: Some("killall bigfred-remote-icmp".into()),
+                restart_cmd: None,
+                env: HashMap::new(),
+                cwd: "/".into(),
+            },
+        ],
+    }
+}
+
+/// Paths used at runtime (overridable for tests).
+#[derive(Debug, Clone)]
+pub struct Paths {
+    pub config: PathBuf,
+    pub example: PathBuf,
+    pub override_file: PathBuf,
+    pub early_boot: PathBuf,
+    pub early_boot_override: PathBuf,
+}
+
+impl Default for Paths {
+    fn default() -> Self {
+        Self {
+            config: default_config_path(),
+            example: default_example_path(),
+            override_file: default_override_path(),
+            early_boot: PathBuf::from(DEFAULT_EARLY_BOOT),
+            early_boot_override: default_early_boot_override_path(),
+        }
+    }
+}

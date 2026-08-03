@@ -1,0 +1,54 @@
+[package]
+name = "microinit"
+version = "0.1.0"
+edition = "2021"
+description = "PID 1 init system and service supervisor for BigFred OS"
+license = "MIT"
+authors = ["BigFred"]
+readme = "README.md"
+
+[lib]
+name = "microinit"
+path = "src/lib.rs"
+
+[[bin]]
+name = "microinit"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+nix = { version = "0.29", features = [
+    "process",
+    "signal",
+    "mount",
+    "reboot",
+    "fs",
+    "user",
+    "socket",
+] }
+thiserror = "2"
+libc = "0.2"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+overflow-checks = true
+
+[profile.release-assertions]
+inherits = "release"
+debug-assertions = true
+overflow-checks = true
+
+[lints.rust]
+unused_must_use = "deny"
+
+[lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"

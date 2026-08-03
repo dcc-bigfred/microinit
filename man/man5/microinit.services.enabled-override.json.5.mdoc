@@ -1,0 +1,38 @@
+.Dd August 3, 2026
+.Dt MICROINIT.SERVICES.ENABLED-OVERRIDE.JSON 5
+.Os "BigFred OS"
+.Sh NAME
+.Nm microinit.services.enabled-override.json
+.Nd persistent enabled flag overrides for microinit
+.Sh SYNOPSIS
+.Pa /data/etc/microinit.services.enabled-override.json
+.Sh DESCRIPTION
+JSON object mapping service name to boolean.
+Loaded after
+.Xr microinit.json 5
+and overrides each service's
+.Cm enabled
+field.
+Missing keys keep the value from the main config.
+.Pp
+Created lazily on the first
+.Nm microinit Cm enable
+or
+.Nm microinit Cm disable
+command.
+Writes are atomic (temp file + rename).
+.Pp
+.Nm microinit Cm enable Ar name
+sets the override to true and starts the service.
+.Nm microinit Cm disable Ar name
+sets false and stops the service.
+.Sh EXAMPLES
+.Bd -literal
+{
+  "dropbear": false,
+  "grafana": true
+}
+.Ed
+.Sh SEE ALSO
+.Xr microinit 8 ,
+.Xr microinit.json 5

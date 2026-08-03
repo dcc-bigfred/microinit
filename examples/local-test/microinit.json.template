@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "logs": {
+    "tty": "/dev/null",
+    "initTty": "/dev/null",
+    "lines": 200,
+    "dir": "@DATA@/logs",
+    "logToFiles": false
+  },
+  "socket": "@DATA@/run/microinit.sock",
+  "console": "/dev/null",
+  "services": [
+    {
+      "name": "hello",
+      "enabled": true,
+      "daemon": false,
+      "restart": false,
+      "restartBackoff": 2,
+      "successExitCodes": [0],
+      "startWaitSecs": 0,
+      "shutdownWaitSecs": 5,
+      "background": false,
+      "dependsOn": [],
+      "cmd": null,
+      "startCmd": "echo 'hello from hello-job'; echo done",
+      "stopCmd": null,
+      "restartCmd": null,
+      "env": {},
+      "cwd": "@DATA@"
+    },
+    {
+      "name": "sleeper",
+      "enabled": true,
+      "daemon": true,
+      "restart": true,
+      "restartBackoff": 2,
+      "successExitCodes": [0],
+      "startWaitSecs": 1,
+      "shutdownWaitSecs": 2,
+      "background": false,
+      "dependsOn": ["hello"],
+      "cmd": null,
+      "startCmd": "while true; do echo \"sleeper tick $(date -Iseconds)\"; sleep 2; done",
+      "stopCmd": null,
+      "restartCmd": null,
+      "env": {},
+      "cwd": "@DATA@"
+    }
+  ]
+}

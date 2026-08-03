@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "logs": {
+    "tty": "/dev/tty2",
+    "initTty": "/dev/tty3",
+    "lines": 300,
+    "dir": "/data/logs",
+    "logToFiles": false
+  },
+  "socket": "/run/microinit.sock",
+  "console": "/dev/tty1",
+  "services": [
+    {
+      "name": "network",
+      "enabled": true,
+      "daemon": false,
+      "restart": false,
+      "restartBackoff": 2,
+      "successExitCodes": [
+        0
+      ],
+      "startWaitSecs": 0,
+      "shutdownWaitSecs": 5,
+      "background": false,
+      "dependsOn": [],
+      "cmd": "/etc/init.d/S15-network",
+      "startCmd": null,
+      "stopCmd": null,
+      "restartCmd": null,
+      "env": {},
+      "cwd": "/"
+    },
+    {
+      "name": "redis",
+      "enabled": true,
+      "daemon": true,
+      "restart": true,
+      "restartBackoff": 2,
+      "successExitCodes": [
+        0
+      ],
+      "startWaitSecs": 1,
+      "shutdownWaitSecs": 5,
+      "background": false,
+      "dependsOn": [
+        "network"
+      ],
+      "cmd": "/etc/init.d/S30-redis",
+      "startCmd": null,
+      "stopCmd": null,
+      "restartCmd": null,
+      "env": {},
+      "cwd": "/"
+    },
+    {
+      "name": "remote-icmp",
+      "enabled": true,
+      "daemon": true,
+      "restart": true,
+      "restartBackoff": 5,
+      "successExitCodes": [
+        0
+      ],
+      "startWaitSecs": 0,
+      "shutdownWaitSecs": 5,
+      "background": true,
+      "dependsOn": [
+        "network"
+      ],
+      "cmd": null,
+      "startCmd": "/usr/bin/bigfred-remote-icmp --config /data/etc/loco-server.conf",
+      "stopCmd": "killall bigfred-remote-icmp",
+      "restartCmd": null,
+      "env": {},
+      "cwd": "/"
+    }
+  ]
+}

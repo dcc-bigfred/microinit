@@ -1,0 +1,77 @@
+.Dd August 3, 2026
+.Dt EARLY-BOOT.SH 8
+.Os
+.Sh NAME
+.Nm early-boot.sh
+.Nd preliminary filesystem mounts for microinit
+.Sh SYNOPSIS
+.Nm
+.Sh DESCRIPTION
+Shell script executed by
+.Xr microinit 8
+before loading configuration.
+Not hardcoded in Rust so boot policy can change without recompilation.
+.Pp
+Search order:
+.Bl -enum
+.It
+.Pa /data/etc/microinit/early-boot.sh
+.Pq if present ; under
+.Ev BIGFRED_DATA_DIR
+when set
+.It
+.Pa /etc/microinit/early-boot.sh
+.It
+Portable script embedded in the
+.Nm microinit
+binary
+.Pq Pa scripts/early-boot.sh
+.El
+.Ss Responsibilities
+The portable embedded script:
+.Bl -enum
+.It
+Mount essential pseudo-filesystems if missing
+.Pq Pa /proc , Pa /sys , Pa /dev , Pa /dev/pts , Pa /run , Pa /tmp
+.It
+Apply
+.Pa /etc/fstab
+via
+.Ic mount -a
+.Pq non-fatal if individual entries fail
+.El
+.Pp
+Product images may install
+.Pa /etc/microinit/early-boot.sh
+with a distro-specific script
+.Pq for example BigFred OS mounts Pa /data , seeds configs, bind-mounts Pa /etc/shadow
+or an override under the data root; otherwise the embedded portable script runs.
+.Ss Environment
+.Bl -tag -width MICROINIT_INIT_LOGS_TTY
+.It Ev BIGFRED_DATA_DIR
+Persistent data root
+.Pq absolute path ; same as BigFred
+.It Ev DATA_DIR
+Fallback data root when
+.Ev BIGFRED_DATA_DIR
+is unset
+.It Ev MICROINIT_LOGS_TTY
+Service logs TTY path from
+.Nm microinit Cm init
+.Pq default Pa /dev/tty2
+.It Ev MICROINIT_INIT_LOGS_TTY
+microinit operational logs TTY
+.Pq default Pa /dev/tty3
+.It Ev MICROINIT_CONSOLE
+Console TTY path
+.Pq default Pa /dev/tty1
+.El
+.Sh EXIT STATUS
+.Ex -std
+Non-zero aborts
+.Nm microinit
+boot when early-boot is required.
+.Sh SEE ALSO
+.Xr microinit 8 ,
+.Xr fstab 5 ,
+.Xr mount 8

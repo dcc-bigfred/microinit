@@ -1,0 +1,149 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - "v*"
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Test (release-assertions)
+        run: cargo test --locked --profile release-assertions
+
+  build:
+    name: Build (linux/arm64 musl)
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-musl
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: aarch64-musl
+
+      - name: Install aarch64 musl cross toolchain
+        run: |
+          set -euo pipefail
+          curl -fsSL https://musl.cc/aarch64-linux-musl-cross.tgz \
+            | sudo tar -xz -C /opt
+          echo "/opt/aarch64-linux-musl-cross/bin" >> "$GITHUB_PATH"
+
+      - name: Build static binary + package dist
+        run: |
+          set -euo pipefail
+          export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-musl-gcc
+          export CC_aarch64_unknown_linux_musl=aarch64-linux-musl-gcc
+          export AR_aarch64_unknown_linux_musl=aarch64-linux-musl-ar
+          export RUSTFLAGS='-C target-feature=+crt-static'
+
+          cargo build --release --target aarch64-unknown-linux-musl
+
+          mkdir -p dist
+          cp -f target/aarch64-unknown-linux-musl/release/microinit dist/microinit-linux-arm64
+          chmod 755 dist/microinit-linux-arm64
+          cp -f scripts/early-boot.sh dist/early-boot.sh
+          chmod 755 dist/early-boot.sh
+
+          make man
+          mkdir -p dist/man/man5 dist/man/man8
+          cp -f man/man5/*.gz dist/man/man5/
+          cp -f man/man8/*.gz dist/man/man8/
+
+          (
+            cd dist
+            sha256sum microinit-linux-arm64 early-boot.sh \
+              man/man5/*.gz man/man8/*.gz > SHA256SUMS
+          )
+
+          file dist/microinit-linux-arm64
+          ls -lh dist/microinit-linux-arm64
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries
+          path: dist/
+          if-no-files-found: error
+          retention-days: 90
+
+  publish-oci:
+    name: Publish OCI artifact to GHCR (ORAS)
+    needs: build
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries
+          path: dist/
+
+      - name: Set up ORAS
+        uses: oras-project/setup-oras@v1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish microinit-linux-arm64
+        run: ./scripts/publish-oci-microinit.sh dist/microinit-linux-arm64 dist/early-boot.sh
+
+      - name: Job summary
+        run: |
+          {
+            echo "### OCI publish"
+            echo ""
+            echo "- Image: \`ghcr.io/dcc-bigfred/microinit-linux-arm64\`"
+            echo "- Tags: \`main\`, \`sha-${GITHUB_SHA::7}\`"
+            echo "- Commit: \`${GITHUB_SHA}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
