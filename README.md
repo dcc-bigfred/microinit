@@ -87,6 +87,7 @@ oras pull ghcr.io/dcc-bigfred/microinit-linux-arm64:latest-release -o ./out
 microinit [--socket PATH] init …
 microinit [--socket PATH] supervise [--config PATH] [--log-to-files]
 microinit start|stop|restart|enable|disable <name>
+microinit start --force <name>   # ignore unmet dependsOn
 microinit list
 microinit logs [name] [--follow] [--lines N]
 ```

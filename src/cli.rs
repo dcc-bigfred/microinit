@@ -32,8 +32,23 @@ pub fn cmd_list(socket: &Path) -> Result<()> {
     }
 }
 
-pub fn cmd_start(socket: &Path, name: &str) -> Result<()> {
-    simple_ok(socket, Request::Start { name: name.into() })
+pub fn cmd_start(socket: &Path, name: &str, force: bool) -> Result<()> {
+    match request(
+        socket,
+        &Request::Start {
+            name: name.into(),
+            force,
+        },
+    )? {
+        Response::Ok { message } => {
+            if let Some(msg) = message {
+                println!("{msg}");
+            }
+            Ok(())
+        }
+        Response::Error { message } => Err(Error::Ipc(message)),
+        other => Err(Error::Ipc(format!("unexpected response: {other:?}"))),
+    }
 }
 
 pub fn cmd_stop(socket: &Path, name: &str) -> Result<()> {
@@ -89,7 +104,7 @@ pub fn cmd_logs(
                 writeln!(out, "[{}] {}: {}", line.ts, line.service, line.msg)?;
                 out.flush()?;
             }
-            Response::Ok => break,
+            Response::Ok { .. } => break,
             Response::Error { message } => return Err(Error::Ipc(message)),
             other => return Err(Error::Ipc(format!("unexpected: {other:?}"))),
         }
@@ -99,7 +114,12 @@ pub fn cmd_logs(
 
 fn simple_ok(socket: &Path, req: Request) -> Result<()> {
     match request(socket, &req)? {
-        Response::Ok => Ok(()),
+        Response::Ok { message } => {
+            if let Some(msg) = message {
+                println!("{msg}");
+            }
+            Ok(())
+        }
         Response::Error { message } => Err(Error::Ipc(message)),
         other => Err(Error::Ipc(format!("unexpected response: {other:?}"))),
     }

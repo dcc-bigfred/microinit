@@ -23,7 +23,12 @@
 .Op Fl -log-to-files
 .Nm
 .Op Fl -socket Ns = Ns Ar path
-.Cm start|stop|restart|enable|disable
+.Cm start
+.Op Fl -force
+.Ar name
+.Nm
+.Op Fl -socket Ns = Ns Ar path
+.Cm stop|restart|enable|disable
 .Ar name
 .Nm
 .Op Fl -socket Ns = Ns Ar path
@@ -164,10 +169,19 @@ Control socket
 .Bd -literal
 microinit init --logs-tty=/dev/tty2 --init-logs-tty=/dev/tty3
 microinit list
+microinit start redis
+microinit start --force alloy
 microinit restart redis
 microinit logs alloy --follow
 microinit disable dropbear
 .Ed
+.Pp
+.Cm start
+prints a status line on stdout: either that the service is starting, that it is
+.Cm waiting_for_dependency ,
+or
+.Pq with Fl -force
+that it is starting despite unmet dependencies.
 .Sh SEE ALSO
 .Xr microinit.json 5 ,
 .Xr microinit.services.enabled-override.json 5 ,

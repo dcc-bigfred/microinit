@@ -16,7 +16,10 @@ fn service_state_display() {
 fn request_response_serde_roundtrip() {
     let cases = vec![
         Request::List,
-        Request::Start { name: "a".into() },
+        Request::Start {
+            name: "a".into(),
+            force: false,
+        },
         Request::Enable {
             name: "b".into(),
             enabled: false,
@@ -56,5 +59,5 @@ fn request_response_serde_roundtrip() {
 fn request_tagged_type_field() {
     let v: serde_json::Value = serde_json::from_str(r#"{"type":"start","name":"redis"}"#).unwrap();
     let req: Request = serde_json::from_value(v).unwrap();
-    assert!(matches!(req, Request::Start { name } if name == "redis"));
+    assert!(matches!(req, Request::Start { name, force: false } if name == "redis"));
 }

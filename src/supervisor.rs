@@ -115,20 +115,28 @@ impl Shared {
         mutex_lock(&self.runtimes).get(name).map(|r| r.state)
     }
 
-    /// `Ok(true)` when every dependency is `Running` or `Succeeded`.
-    /// Missing deps → error. Not-yet-ready (including `Failed`/`Disabled`) → `Ok(false)`.
-    fn deps_ready(&self, deps: &[String]) -> Result<bool> {
+    /// Names of dependencies that are not yet `Running`/`Succeeded`.
+    fn unmet_deps(&self, deps: &[String]) -> Result<Vec<String>> {
         let map = mutex_lock(&self.runtimes);
+        let mut out = Vec::new();
         for dep in deps {
             let Some(rt) = map.get(dep) else {
                 return Err(Error::UnknownService(dep.clone()));
             };
-            match rt.state {
-                ServiceState::Running | ServiceState::Succeeded => {}
-                _ => return Ok(false),
+            if !matches!(
+                rt.state,
+                ServiceState::Running | ServiceState::Succeeded
+            ) {
+                out.push(dep.clone());
             }
         }
-        Ok(true)
+        Ok(out)
+    }
+
+    /// `Ok(true)` when every dependency is `Running` or `Succeeded`.
+    /// Missing deps → error. Not-yet-ready (including `Failed`/`Disabled`) → `Ok(false)`.
+    fn deps_ready(&self, deps: &[String]) -> Result<bool> {
+        Ok(self.unmet_deps(deps)?.is_empty())
     }
 
     fn wait_settled(&self, name: &str, timeout: Duration) -> ServiceState {
@@ -180,7 +188,7 @@ pub struct Supervisor {
 }
 
 enum CtlMsg {
-    Start,
+    Start { force: bool },
     Stop,
     Restart,
     Quit,
@@ -268,16 +276,35 @@ impl Supervisor {
     }
 
     #[must_use = "start may fail if the service is disabled or unknown"]
-    pub fn start_service(&self, name: &str) -> Result<()> {
+    pub fn start_service(&self, name: &str, force: bool) -> Result<String> {
         if !self.shared.is_enabled(name)? {
             return Err(Error::Disabled(name.to_string()));
         }
+        let cfg = self.service_cfg(name)?;
+        let unmet = self.shared.unmet_deps(&cfg.depends_on)?;
+        let message = if unmet.is_empty() {
+            format!("{name}: starting")
+        } else if force {
+            format!(
+                "{name}: starting with --force (unmet dependencies: {})",
+                unmet.join(", ")
+            )
+        } else {
+            format!(
+                "{name}: waiting for dependencies ({})",
+                unmet.join(", ")
+            )
+        };
         self.hub.emit(
             INIT_SERVICE,
             LogLevel::Info,
-            format!("request: start {name}"),
+            format!(
+                "request: start {name}{}",
+                if force { " --force" } else { "" }
+            ),
         );
-        self.send_ctl(name, CtlMsg::Start)
+        self.send_ctl(name, CtlMsg::Start { force })?;
+        Ok(message)
     }
 
     #[must_use = "stop may fail if the service is unknown"]
@@ -326,7 +353,7 @@ impl Supervisor {
         );
         self.shared.set_enabled(name, enabled);
         if enabled {
-            self.send_ctl(name, CtlMsg::Start)?;
+            self.send_ctl(name, CtlMsg::Start { force: false })?;
         } else {
             self.send_ctl(name, CtlMsg::Stop)?;
         }
@@ -347,7 +374,7 @@ impl Supervisor {
         let (foreground, background) = partition_boot(&services)?;
 
         for name in &background {
-            if let Err(e) = self.send_ctl(name, CtlMsg::Start) {
+            if let Err(e) = self.send_ctl(name, CtlMsg::Start { force: false }) {
                 self.hub
                     .emit(INIT_SERVICE, LogLevel::Error, format!("start {name}: {e}"));
             }
@@ -355,7 +382,7 @@ impl Supervisor {
 
         for name in &foreground {
             self.console.starting(name);
-            if let Err(e) = self.send_ctl(name, CtlMsg::Start) {
+            if let Err(e) = self.send_ctl(name, CtlMsg::Start { force: false }) {
                 self.hub
                     .emit(INIT_SERVICE, LogLevel::Error, format!("start {name}: {e}"));
                 self.console.fail(name);
@@ -506,7 +533,7 @@ impl Supervisor {
                 );
                 self.spawn_monitor(&svc.name)?;
                 if svc.enabled {
-                    let _ = self.send_ctl(&svc.name, CtlMsg::Start);
+                    let _ = self.send_ctl(&svc.name, CtlMsg::Start { force: false });
                 }
                 continue;
             }
@@ -518,7 +545,7 @@ impl Supervisor {
             if old_svc.enabled != svc.enabled {
                 self.shared.set_enabled(&svc.name, svc.enabled);
                 if svc.enabled {
-                    let _ = self.send_ctl(&svc.name, CtlMsg::Start);
+                    let _ = self.send_ctl(&svc.name, CtlMsg::Start { force: false });
                 } else {
                     let _ = self.send_ctl(&svc.name, CtlMsg::Stop);
                 }
@@ -597,18 +624,18 @@ impl Supervisor {
                                 continue;
                             }
                         }
-                        if let Err(e) = self.do_start(&cfg, &mut tracked) {
+                        if let Err(e) = self.do_start(&cfg, &mut tracked, false) {
                             self.hub
                                 .emit(INIT_SERVICE, LogLevel::Error, format!("{name}: {e}"));
                             self.shared.set_state(&name, ServiceState::Failed, None);
                         }
                         continue;
                     }
-                    CtlMsg::Start => {
+                    CtlMsg::Start { force } => {
                         if tracked.is_some() {
                             continue;
                         }
-                        if let Err(e) = self.do_start(&cfg, &mut tracked) {
+                        if let Err(e) = self.do_start(&cfg, &mut tracked, force) {
                             self.hub
                                 .emit(INIT_SERVICE, LogLevel::Error, format!("{name}: {e}"));
                             self.shared.set_state(&name, ServiceState::Failed, None);
@@ -632,7 +659,7 @@ impl Supervisor {
                     Some(ServiceState::WaitingForDependency)
                 ) {
                     if let Ok(cfg) = self.service_cfg(&name) {
-                        if let Err(e) = self.do_start(&cfg, &mut tracked) {
+                        if let Err(e) = self.do_start(&cfg, &mut tracked, false) {
                             self.hub
                                 .emit(INIT_SERVICE, LogLevel::Error, format!("{name}: {e}"));
                             self.shared.set_state(&name, ServiceState::Failed, None);
@@ -696,7 +723,7 @@ impl Supervisor {
                 ),
             );
             thread::sleep(Duration::from_secs(cfg.restart_backoff));
-            if let Err(e) = self.do_start(cfg, tracked) {
+            if let Err(e) = self.do_start(cfg, tracked, false) {
                 self.hub
                     .emit(INIT_SERVICE, LogLevel::Error, format!("{name}: {e}"));
                 self.shared.set_state(name, ServiceState::Failed, None);
@@ -706,14 +733,19 @@ impl Supervisor {
         }
     }
 
-    fn do_start(self: &Arc<Self>, cfg: &ServiceConfig, tracked: &mut Option<i32>) -> Result<()> {
+    fn do_start(
+        self: &Arc<Self>,
+        cfg: &ServiceConfig,
+        tracked: &mut Option<i32>,
+        force: bool,
+    ) -> Result<()> {
         let name = &cfg.name;
         if !self.shared.is_enabled(name)? {
             self.shared.set_state(name, ServiceState::Disabled, None);
             return Err(Error::Disabled(name.clone()));
         }
 
-        if !cfg.depends_on.is_empty() && !self.shared.deps_ready(&cfg.depends_on)? {
+        if !force && !cfg.depends_on.is_empty() && !self.shared.deps_ready(&cfg.depends_on)? {
             if !matches!(
                 self.shared.current_state(name),
                 Some(ServiceState::WaitingForDependency)
@@ -730,6 +762,20 @@ impl Supervisor {
             self.shared
                 .set_state(name, ServiceState::WaitingForDependency, None);
             return Ok(());
+        }
+
+        if force && !cfg.depends_on.is_empty() {
+            let unmet = self.shared.unmet_deps(&cfg.depends_on)?;
+            if !unmet.is_empty() {
+                self.hub.emit(
+                    INIT_SERVICE,
+                    LogLevel::Warn,
+                    format!(
+                        "{name}: starting with --force (unmet dependencies: {})",
+                        unmet.join(", ")
+                    ),
+                );
+            }
         }
 
         self.shared.set_state(name, ServiceState::Starting, None);

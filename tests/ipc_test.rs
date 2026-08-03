@@ -15,13 +15,17 @@ fn frame_roundtrip_cursor() {
         &mut buf,
         &Request::Start {
             name: "redis".into(),
+            force: false,
         },
     )
     .unwrap();
     let mut cur = Cursor::new(buf);
     let req: Request = read_frame_from(&mut cur).unwrap();
     match req {
-        Request::Start { name } => assert_eq!(name, "redis"),
+        Request::Start { name, force } => {
+            assert_eq!(name, "redis");
+            assert!(!force);
+        }
         other => panic!("unexpected {other:?}"),
     }
 }
@@ -38,7 +42,13 @@ fn frame_roundtrip_unix_pair() {
             }
             other => panic!("unexpected {other:?}"),
         }
-        write_frame(&mut b, &Response::Ok).unwrap();
+        write_frame(
+            &mut b,
+            &Response::Ok {
+                message: None,
+            },
+        )
+        .unwrap();
     });
     write_frame(
         &mut a,
@@ -54,7 +64,7 @@ fn frame_roundtrip_unix_pair() {
     )
     .unwrap();
     let ack: Response = read_frame(&mut a).unwrap();
-    assert!(matches!(ack, Response::Ok));
+    assert!(matches!(ack, Response::Ok { message: None }));
     handle.join().unwrap();
 }
 

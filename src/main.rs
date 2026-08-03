@@ -67,7 +67,12 @@ enum Commands {
         log_to_files: bool,
     },
     /// Start a service
-    Start { name: String },
+    Start {
+        name: String,
+        /// Start even if dependsOn services are not Running/Succeeded
+        #[arg(long)]
+        force: bool,
+    },
     /// Stop a service
     Stop { name: String },
     /// Restart a service
@@ -218,7 +223,7 @@ fn main() -> ExitCode {
             attach_ttys: false,
             socket,
         }),
-        Commands::Start { name } => cli::cmd_start(&cli.socket, &name),
+        Commands::Start { name, force } => cli::cmd_start(&cli.socket, &name, force),
         Commands::Stop { name } => cli::cmd_stop(&cli.socket, &name),
         Commands::Restart { name } => cli::cmd_restart(&cli.socket, &name),
         Commands::Enable { name } => cli::cmd_enable(&cli.socket, &name),

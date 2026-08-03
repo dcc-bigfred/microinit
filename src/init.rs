@@ -299,8 +299,8 @@ fn handle_ipc(
                 },
             )?,
         },
-        Request::Start { name } => {
-            respond_result(stream, supervisor.start_service(&name))?;
+        Request::Start { name, force } => {
+            respond_start(stream, supervisor.start_service(&name, force))?;
         }
         Request::Stop { name } => {
             respond_result(stream, supervisor.stop_service(&name))?;
@@ -337,20 +337,53 @@ fn handle_ipc(
                     }
                 }
             } else {
-                write_frame(stream, &Response::Ok)?;
+                write_frame(
+                    stream,
+                    &Response::Ok {
+                        message: None,
+                    },
+                )?;
             }
         }
         Request::Shutdown { mode } => {
-            write_frame(stream, &Response::Ok)?;
+            write_frame(
+                stream,
+                &Response::Ok {
+                    message: None,
+                },
+            )?;
             signals::request_shutdown(mode);
         }
     }
     Ok(())
 }
 
+fn respond_start(stream: &mut UnixStream, res: Result<String>) -> Result<()> {
+    match res {
+        Ok(message) => write_frame(
+            stream,
+            &Response::Ok {
+                message: Some(message),
+            },
+        )?,
+        Err(e) => write_frame(
+            stream,
+            &Response::Error {
+                message: e.to_string(),
+            },
+        )?,
+    }
+    Ok(())
+}
+
 fn respond_result(stream: &mut UnixStream, res: Result<()>) -> Result<()> {
     match res {
-        Ok(()) => write_frame(stream, &Response::Ok)?,
+        Ok(()) => write_frame(
+            stream,
+            &Response::Ok {
+                message: None,
+            },
+        )?,
         Err(e) => write_frame(
             stream,
             &Response::Error {

@@ -113,6 +113,9 @@ pub enum Request {
     List,
     Start {
         name: String,
+        /// Skip `dependsOn` checks and start immediately.
+        #[serde(default)]
+        force: bool,
     },
     Stop {
         name: String,
@@ -141,7 +144,10 @@ pub enum Request {
 #[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum Response {
-    Ok,
+    Ok {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
     Error {
         message: String,
     },

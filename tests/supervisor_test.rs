@@ -137,7 +137,10 @@ fn disabled_skipped_at_boot_and_start_refused() {
     sup.boot().unwrap();
     assert_eq!(sup.status("on").unwrap().state, ServiceState::Succeeded);
     assert_eq!(sup.status("off").unwrap().state, ServiceState::Disabled);
-    assert!(matches!(sup.start_service("off"), Err(Error::Disabled(_))));
+    assert!(matches!(
+        sup.start_service("off", false),
+        Err(Error::Disabled(_))
+    ));
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -175,7 +178,7 @@ fn unknown_service_errors() {
     sup.boot().unwrap();
     assert!(matches!(sup.status("nope"), Err(Error::UnknownService(_))));
     assert!(matches!(
-        sup.start_service("nope"),
+        sup.start_service("nope", false),
         Err(Error::UnknownService(_))
     ));
     let _ = std::fs::remove_dir_all(dir);
@@ -291,5 +294,35 @@ fn stop_cancels_waiting_for_dependency() {
     sup.set_enabled("dep", true).unwrap();
     thread::sleep(Duration::from_millis(500));
     assert_eq!(sup.status("child").unwrap().state, ServiceState::Stopped);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn start_force_bypasses_waiting_for_dependency() {
+    let (sup, dir) = make_sup(vec![
+        job("dep", "true", &[], false),
+        job("child", "true", &["dep"], true),
+    ]);
+    sup.boot().unwrap();
+    thread::sleep(Duration::from_millis(400));
+    assert_eq!(
+        sup.status("child").unwrap().state,
+        ServiceState::WaitingForDependency
+    );
+
+    let msg = sup.start_service("child", true).unwrap();
+    assert!(
+        msg.contains("--force") && msg.contains("dep"),
+        "unexpected message: {msg}"
+    );
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while std::time::Instant::now() < deadline {
+        if sup.status("child").unwrap().state == ServiceState::Succeeded {
+            break;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(sup.status("child").unwrap().state, ServiceState::Succeeded);
     let _ = std::fs::remove_dir_all(dir);
 }
