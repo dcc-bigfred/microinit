@@ -109,7 +109,15 @@ Seconds to wait after stop signal / stopCmd before sending
 .It Cm background
 Start in parallel; does not block boot (default false)
 .It Cm dependsOn
-Services that must be settled first
+Services that must be
+.Cm Running
+or
+.Cm Succeeded
+before start. Until then the service stays in
+.Cm waiting_for_dependency
+and starts automatically when ready; a manual
+.Cm stop
+cancels the wait.
 .It Cm cmd
 Base command; used as
 .Dq cmd start|stop|restart

@@ -243,3 +243,53 @@ fn shutdown_wait_secs_stops_tracked_daemon() {
     ));
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn waits_for_dependency_then_starts() {
+    let (sup, dir) = make_sup(vec![
+        job("dep", "true", &[], false),
+        job("child", "true", &["dep"], true),
+    ]);
+    sup.boot().unwrap();
+    thread::sleep(Duration::from_millis(400));
+    assert_eq!(
+        sup.status("child").unwrap().state,
+        ServiceState::WaitingForDependency
+    );
+
+    sup.set_enabled("dep", true).unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while std::time::Instant::now() < deadline {
+        if sup.status("child").unwrap().state == ServiceState::Succeeded {
+            break;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(sup.status("dep").unwrap().state, ServiceState::Succeeded);
+    assert_eq!(sup.status("child").unwrap().state, ServiceState::Succeeded);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn stop_cancels_waiting_for_dependency() {
+    let (sup, dir) = make_sup(vec![
+        job("dep", "true", &[], false),
+        job("child", "true", &["dep"], true),
+    ]);
+    sup.boot().unwrap();
+    thread::sleep(Duration::from_millis(400));
+    assert_eq!(
+        sup.status("child").unwrap().state,
+        ServiceState::WaitingForDependency
+    );
+
+    sup.stop_service("child").unwrap();
+    thread::sleep(Duration::from_millis(300));
+    assert_eq!(sup.status("child").unwrap().state, ServiceState::Stopped);
+
+    // Enabling the dependency must not auto-start a manually stopped child.
+    sup.set_enabled("dep", true).unwrap();
+    thread::sleep(Duration::from_millis(500));
+    assert_eq!(sup.status("child").unwrap().state, ServiceState::Stopped);
+    let _ = std::fs::remove_dir_all(dir);
+}

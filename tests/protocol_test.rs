@@ -6,6 +6,10 @@ use microinit::protocol::*;
 fn service_state_display() {
     assert_eq!(ServiceState::Running.to_string(), "running");
     assert_eq!(ServiceState::Disabled.to_string(), "disabled");
+    assert_eq!(
+        ServiceState::WaitingForDependency.to_string(),
+        "waiting_for_dependency"
+    );
 }
 
 #[test]

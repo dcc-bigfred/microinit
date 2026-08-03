@@ -7,6 +7,11 @@ use crate::config::ServiceConfig;
 use crate::constants::TERMINATE_POLL;
 use crate::error::{Error, Result};
 
+/// Default PATH for supervised processes. Kernel-started PID 1 often has no
+/// PATH; without `/sbin` tools like `ip` and `dhclient` are invisible.
+const DEFAULT_SERVICE_PATH: &str =
+    "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+
 fn build_shell_command(
     cmd: &str,
     cfg: &ServiceConfig,
@@ -19,6 +24,12 @@ fn build_shell_command(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+
+    // Predictable PATH unless the service (or caller) overrides it.
+    if !cfg.env.contains_key("PATH") && !env_extra.contains_key("PATH") {
+        c.env("PATH", DEFAULT_SERVICE_PATH);
+    }
+
     for (k, v) in &cfg.env {
         c.env(k, v);
     }

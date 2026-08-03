@@ -210,7 +210,7 @@ stateDiagram-v2
 - **stop:** uruchom `stopCmd` (jesli jest), wyslij SIGTERM do tracked PID, czekaj `shutdownWaitSecs`, potem SIGKILL.
 - **background=true:** startuje rownolegle, nie blokuje fazy boot; wypisuje status na console gdy osiagnie settled state (asynchronicznie).
 - **background=false (foreground):** blokuje boot do settled state; console pokazuje status natychmiast po osiagnieciu settled.
-- **dependsOn:** przed startem czekaj az wszystkie zaleznosci osiagna `Succeeded` (job) lub `Running` (daemon). Timeout z bledem jesli zaleznosc `Failed`.
+- **dependsOn:** before start, if any dependency is not yet `Running`/`Succeeded`, enter `waiting_for_dependency` and retry until ready (or until manual `stop`/disable). Do not fail the start when a dependency is temporarily `Failed`.
 - **enabled=false:** usluga w stanie `Disabled` - nie startuje w boot, `start`/`restart` przez CLI odmawiaja (blad). `enable` CLI przywraca `enabled=true` i (opcjonalnie) startuje usluge.
 
 ## 7. Sortowanie i kolejnosc boot

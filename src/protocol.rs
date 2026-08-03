@@ -16,6 +16,9 @@ pub enum ServiceState {
     Stopped,
     Restarting,
     Disabled,
+    /// Start was requested; blocked until `dependsOn` services are ready.
+    /// Cleared by a successful start, or by manual `stop` / disable.
+    WaitingForDependency,
 }
 
 impl std::fmt::Display for ServiceState {
@@ -30,6 +33,7 @@ impl std::fmt::Display for ServiceState {
             Self::Stopped => "stopped",
             Self::Restarting => "restarting",
             Self::Disabled => "disabled",
+            Self::WaitingForDependency => "waiting_for_dependency",
         };
         write!(f, "{s}")
     }

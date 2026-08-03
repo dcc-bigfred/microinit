@@ -78,6 +78,8 @@ Each service has, among other fields:
 - dependencies (`dependsOn`),  
 - wait times on start and on shutdown.
 
+**Dependencies:** when start is requested (boot or CLI) and a `dependsOn` service is not yet `Running`/`Succeeded`, the dependent enters **`waiting_for_dependency`** and stays there until every dependency is ready, then starts automatically. A manual `stop` (or disable) cancels that wait — satisfying the dependency later does **not** restart a stopped service.
+
 **Execution model:** one **monitor thread per service**. A shared main loop handles signals, zombie reaping, and socket commands. Child processes are collected by a central **reaper** (so multiple places do not race on `waitpid`).
 
 External control (CLI, UI) goes through a **Unix socket** (default `/run/microinit.sock`): start, stop, restart, enable/disable, list, logs. The CLI `--socket` flag sets the same path for both the daemon and clients.

@@ -60,7 +60,10 @@ impl Shared {
             match (state, pid) {
                 (_, Some(p)) => rt.pid = Some(p),
                 (
-                    ServiceState::Running | ServiceState::Starting | ServiceState::Restarting,
+                    ServiceState::Running
+                        | ServiceState::Starting
+                        | ServiceState::Restarting
+                        | ServiceState::WaitingForDependency,
                     None,
                 ) => {
                     // keep existing pid
@@ -73,7 +76,9 @@ impl Shared {
                         rt.running_since = Some(Instant::now());
                     }
                 }
-                ServiceState::Starting | ServiceState::Restarting => {}
+                ServiceState::Starting
+                    | ServiceState::Restarting
+                    | ServiceState::WaitingForDependency => {}
                 _ => rt.running_since = None,
             }
         }
@@ -106,6 +111,26 @@ impl Shared {
             .ok_or_else(|| Error::UnknownService(name.to_string()))
     }
 
+    fn current_state(&self, name: &str) -> Option<ServiceState> {
+        mutex_lock(&self.runtimes).get(name).map(|r| r.state)
+    }
+
+    /// `Ok(true)` when every dependency is `Running` or `Succeeded`.
+    /// Missing deps → error. Not-yet-ready (including `Failed`/`Disabled`) → `Ok(false)`.
+    fn deps_ready(&self, deps: &[String]) -> Result<bool> {
+        let map = mutex_lock(&self.runtimes);
+        for dep in deps {
+            let Some(rt) = map.get(dep) else {
+                return Err(Error::UnknownService(dep.clone()));
+            };
+            match rt.state {
+                ServiceState::Running | ServiceState::Succeeded => {}
+                _ => return Ok(false),
+            }
+        }
+        Ok(true)
+    }
+
     fn wait_settled(&self, name: &str, timeout: Duration) -> ServiceState {
         let deadline = std::time::Instant::now() + timeout;
         let mut map = mutex_lock(&self.runtimes);
@@ -121,6 +146,7 @@ impl Shared {
                     | ServiceState::Failed
                     | ServiceState::Stopped
                     | ServiceState::Disabled
+                    | ServiceState::WaitingForDependency
             ) {
                 return state;
             }
@@ -138,44 +164,6 @@ impl Shared {
                     .get(name)
                     .map(|r| r.state)
                     .unwrap_or(ServiceState::Failed);
-            }
-        }
-    }
-
-    fn wait_deps(&self, deps: &[String], timeout: Duration) -> Result<()> {
-        let deadline = std::time::Instant::now() + timeout;
-        let mut map = mutex_lock(&self.runtimes);
-        loop {
-            let mut ready = true;
-            for dep in deps {
-                let Some(rt) = map.get(dep) else {
-                    return Err(Error::UnknownService(dep.clone()));
-                };
-                match rt.state {
-                    ServiceState::Running | ServiceState::Succeeded => {}
-                    ServiceState::Failed | ServiceState::Disabled => {
-                        return Err(Error::Service(
-                            dep.clone(),
-                            format!("dependency in state {}", rt.state),
-                        ));
-                    }
-                    _ => ready = false,
-                }
-            }
-            if ready {
-                return Ok(());
-            }
-            let now = std::time::Instant::now();
-            if now >= deadline {
-                return Err(Error::Other("dependency wait timed out".into()));
-            }
-            let (guard, result) = self
-                .cv
-                .wait_timeout(map, deadline - now)
-                .unwrap_or_else(|e| e.into_inner());
-            map = guard;
-            if result.timed_out() {
-                return Err(Error::Other("dependency wait timed out".into()));
             }
         }
     }
@@ -386,7 +374,8 @@ impl Supervisor {
                 ServiceState::Running
                 | ServiceState::Succeeded
                 | ServiceState::Starting
-                | ServiceState::Pending => self.console.ok(name),
+                | ServiceState::Pending
+                | ServiceState::WaitingForDependency => self.console.ok(name),
                 _ => self.console.fail(name),
             }
         }
@@ -636,6 +625,20 @@ impl Supervisor {
                         self.on_process_exit(&cfg, &mut tracked, code);
                     }
                 }
+            } else if !self.shared.stop_all.load(Ordering::SeqCst) {
+                // Start was requested earlier but deps were not ready: retry when they are.
+                if matches!(
+                    self.shared.current_state(&name),
+                    Some(ServiceState::WaitingForDependency)
+                ) {
+                    if let Ok(cfg) = self.service_cfg(&name) {
+                        if let Err(e) = self.do_start(&cfg, &mut tracked) {
+                            self.hub
+                                .emit(INIT_SERVICE, LogLevel::Error, format!("{name}: {e}"));
+                            self.shared.set_state(&name, ServiceState::Failed, None);
+                        }
+                    }
+                }
             }
         }
     }
@@ -710,8 +713,23 @@ impl Supervisor {
             return Err(Error::Disabled(name.clone()));
         }
 
-        if !cfg.depends_on.is_empty() {
-            self.shared.wait_deps(&cfg.depends_on, DEP_WAIT)?;
+        if !cfg.depends_on.is_empty() && !self.shared.deps_ready(&cfg.depends_on)? {
+            if !matches!(
+                self.shared.current_state(name),
+                Some(ServiceState::WaitingForDependency)
+            ) {
+                self.hub.emit(
+                    INIT_SERVICE,
+                    LogLevel::Info,
+                    format!(
+                        "{name}: waiting for dependencies ({})",
+                        cfg.depends_on.join(", ")
+                    ),
+                );
+            }
+            self.shared
+                .set_state(name, ServiceState::WaitingForDependency, None);
+            return Ok(());
         }
 
         self.shared.set_state(name, ServiceState::Starting, None);
