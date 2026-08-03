@@ -1,0 +1,42 @@
+// Example Grafana Alloy fragment for receiving microinit OTLP metrics.
+// Merge into your Alloy config and point prometheus.remote_write at your backend.
+//
+// microinit.json:
+//   "openTelemetry": {
+//     "enable": true,
+//     "endpoint": "http://<alloy-host>:4318",
+//     "protocol": "http",
+//     "serviceName": "microinit"
+//   }
+//
+// Default cargo build includes OTel. Disable with: cargo build --release --no-default-features
+
+otelcol.receiver.otlp "microinit" {
+  http {
+    endpoint = "0.0.0.0:4318"
+  }
+  grpc {
+    endpoint = "0.0.0.0:4317"
+  }
+
+  output {
+    metrics = [otelcol.processor.batch.microinit.input]
+  }
+}
+
+otelcol.processor.batch "microinit" {
+  output {
+    metrics = [otelcol.exporter.prometheus.microinit.input]
+  }
+}
+
+otelcol.exporter.prometheus "microinit" {
+  forward_to = [prometheus.remote_write.default.receiver]
+}
+
+// Replace endpoint / auth with your Prometheus, Mimir, or Grafana Cloud details.
+prometheus.remote_write "default" {
+  endpoint {
+    url = "http://localhost:9090/api/v1/write"
+  }
+}

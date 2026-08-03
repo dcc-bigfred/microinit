@@ -1,7 +1,7 @@
 //! Early-boot script runner.
 //!
 //! Search order:
-//! 1. override under the data root (`$BIGFRED_DATA_DIR/etc/microinit/early-boot.sh`)
+//! 1. override under the data root (`$DATA_DIR/etc/microinit/early-boot.sh`)
 //! 2. `/etc/microinit/early-boot.sh`
 //! 3. portable script embedded in this binary (`scripts/early-boot.sh`)
 
@@ -59,8 +59,7 @@ pub fn run_script(script: &Path, logs_tty: &str, init_logs_tty: &str, console: &
         .env("MICROINIT_LOGS_TTY", logs_tty)
         .env("MICROINIT_INIT_LOGS_TTY", init_logs_tty)
         .env("MICROINIT_CONSOLE", console)
-        .env(datadir::ENV_PRIMARY, &data_root)
-        .env(datadir::ENV_FALLBACK, &data_root)
+        .env(datadir::ENV_DATA_DIR, &data_root)
         .status()
         .map_err(|e| Error::Other(format!("failed to exec {}: {e}", script.display())))?;
 
@@ -85,8 +84,7 @@ pub fn run_script_bytes(
         .env("MICROINIT_LOGS_TTY", logs_tty)
         .env("MICROINIT_INIT_LOGS_TTY", init_logs_tty)
         .env("MICROINIT_CONSOLE", console)
-        .env(datadir::ENV_PRIMARY, &data_root)
-        .env(datadir::ENV_FALLBACK, &data_root)
+        .env(datadir::ENV_DATA_DIR, &data_root)
         .spawn()
         .map_err(|e| Error::Other(format!("failed to exec /bin/sh -s: {e}")))?;
 

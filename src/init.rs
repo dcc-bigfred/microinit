@@ -1,7 +1,7 @@
-//! PID 1 / `microinit init` procedure.
+//! PID 1 / `microinit init` / `microinit supervise` procedure.
 
 use std::os::unix::net::UnixStream;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::thread;
@@ -29,6 +29,12 @@ pub struct InitOpts {
     pub require_early_boot: bool,
     /// Force `logs.logToFiles` on (CLI override; config may also enable it).
     pub log_to_files: bool,
+    /// Spawn getty on the console when PID 1 (full init only).
+    pub spawn_getty: bool,
+    /// Attach service/init TTYs to LogHub (false for container supervise).
+    pub attach_ttys: bool,
+    /// Control socket path (overrides JSON after load).
+    pub socket: String,
 }
 
 impl Default for InitOpts {
@@ -41,25 +47,32 @@ impl Default for InitOpts {
             skip_early_boot: false,
             require_early_boot: true,
             log_to_files: false,
+            spawn_getty: true,
+            attach_ttys: true,
+            socket: crate::config::DEFAULT_SOCKET.to_string(),
         }
     }
 }
 
 pub fn run(opts: InitOpts) -> Result<()> {
     // Resolve init-logs path early so pre-hub boot notes reach tty3 as well as stderr.
-    let init_logs_preview = opts.init_logs_tty.clone();
+    let init_logs_preview = if opts.attach_ttys {
+        Some(opts.init_logs_tty.as_str())
+    } else {
+        None
+    };
 
     if let Err(e) = signals::install_handlers() {
         boot_note(
-            Some(&init_logs_preview),
+            init_logs_preview,
             &format!("warning: could not install signal handlers: {e}"),
         );
     }
 
     if opts.skip_early_boot {
         boot_note(
-            Some(&init_logs_preview),
-            "skipping early-boot (--no-early-boot)",
+            init_logs_preview,
+            "skipping early-boot (--no-early-boot / supervise)",
         );
     } else {
         match crate::early_boot::run(
@@ -70,7 +83,7 @@ pub fn run(opts: InitOpts) -> Result<()> {
         ) {
             Ok(()) => {}
             Err(e) => {
-                boot_note(Some(&init_logs_preview), &format!("early-boot failed: {e}"));
+                boot_note(init_logs_preview, &format!("early-boot failed: {e}"));
                 if opts.require_early_boot {
                     return Err(e);
                 }
@@ -78,11 +91,15 @@ pub fn run(opts: InitOpts) -> Result<()> {
         }
     }
 
-    let mut cfg = config::load_or_create(
+    let mut cfg = config::load_or_create_with_dropins(
         &opts.paths.config,
         &opts.paths.example,
         &opts.paths.override_file,
+        &opts.paths.dropins_dir,
     )?;
+
+    // CLI / InitOpts socket always wins over JSON.
+    cfg.socket = opts.socket.clone();
 
     let logs_tty = if opts.logs_tty != DEFAULT_LOGS_TTY {
         opts.logs_tty.clone()
@@ -98,23 +115,34 @@ pub fn run(opts: InitOpts) -> Result<()> {
         cfg.logs.log_to_files = true;
     }
     let log_dir = cfg.logs.effective_log_dir();
-    let hub = Arc::new(LogHub::new(
-        cfg.logs.lines,
-        Some(&logs_tty),
-        Some(&init_logs_tty),
-        log_dir,
-    ));
+
+    let (svc_tty, init_tty) = if opts.attach_ttys {
+        (Some(logs_tty.as_str()), Some(init_logs_tty.as_str()))
+    } else {
+        (None, None)
+    };
+    let hub = Arc::new(LogHub::new(cfg.logs.lines, svc_tty, init_tty, log_dir));
     // Boot phase: init lines → tty3 and stderr (see LogHub::boot_tee_stderr).
     let console = Arc::new(Console::open_with_hub(&opts.console, Some(hub.clone())));
 
     hub.emit_init(LogLevel::Info, "configuration loaded");
-    hub.emit_init(
-        LogLevel::Info,
-        format!("service logs on {logs_tty}; init logs on {init_logs_tty}"),
-    );
+    if opts.attach_ttys {
+        hub.emit_init(
+            LogLevel::Info,
+            format!("service logs on {logs_tty}; init logs on {init_logs_tty}"),
+        );
+    } else {
+        hub.emit_init(
+            LogLevel::Info,
+            "TTY attach disabled (supervise); logs via ring/IPC",
+        );
+    }
     if cfg.logs.log_to_files {
         if let Some(ref dir) = cfg.logs.dir {
-            hub.emit_init(LogLevel::Info, format!("logToFiles enabled; writing under {dir}"));
+            hub.emit_init(
+                LogLevel::Info,
+                format!("logToFiles enabled; writing under {dir}"),
+            );
         }
     }
 
@@ -136,6 +164,21 @@ pub fn run(opts: InitOpts) -> Result<()> {
     supervisor.boot()?;
     hub.emit_init(LogLevel::Info, "boot complete");
 
+    #[cfg(feature = "otel")]
+    {
+        let otel_cfg = supervisor.open_telemetry();
+        let _otel_stop = crate::otel::maybe_spawn(supervisor.clone(), otel_cfg, hub.clone());
+    }
+    #[cfg(not(feature = "otel"))]
+    {
+        if supervisor.open_telemetry().enable {
+            hub.emit_init(
+                LogLevel::Warn,
+                "openTelemetry.enable=true but binary built without OpenTelemetry (`--no-default-features`)",
+            );
+        }
+    }
+
     // After boot / before getty: lifecycle logs only on --init-logs-tty.
     hub.end_boot_tee();
     hub.emit_init(
@@ -143,13 +186,35 @@ pub fn run(opts: InitOpts) -> Result<()> {
         "boot tee ended; further lifecycle logs only on init-logs-tty",
     );
 
-    // Getty belongs on the real console when we are PID 1; skip for host/local runs.
-    if std::process::id() == 1 {
+    // Getty only for full init as PID 1 — never for supervise (also often PID 1 in containers).
+    if opts.spawn_getty && std::process::id() == 1 {
         let console_dev = opts.console.clone();
         thread::spawn(move || getty_respawn(&console_dev));
+    } else if !opts.spawn_getty {
+        hub.emit_init(LogLevel::Info, "getty disabled (supervise)");
     } else {
         hub.emit_init(LogLevel::Info, "not PID 1; skipping getty respawn");
     }
+
+    let etc_dir = opts
+        .paths
+        .config
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("/data/etc"));
+    let dropins_dir = opts.paths.dropins_dir.clone();
+    let paths_for_reload = opts.paths.clone();
+    let socket_override = opts.socket.clone();
+    let (reload_rx, _watch_stop) =
+        match crate::config_watch::spawn(etc_dir, dropins_dir, hub.clone()) {
+            Ok(pair) => pair,
+            Err(e) => {
+                hub.emit_init(LogLevel::Warn, format!("config watch unavailable: {e}"));
+                // Dummy channel that never fires.
+                let (_tx, rx) = std::sync::mpsc::channel();
+                (rx, Arc::new(std::sync::atomic::AtomicBool::new(true)))
+            }
+        };
 
     // Exits are published by the process-wide reaper thread started in Supervisor::boot.
     // Opportunistic reap here covers the window before that thread runs and orphans.
@@ -158,6 +223,28 @@ pub fn run(opts: InitOpts) -> Result<()> {
         let _ = signals::sigchld_pending();
         for (pid, code) in signals::reap_zombies() {
             exits.publish(pid.as_raw(), code);
+        }
+
+        while reload_rx.try_recv().is_ok() {
+            match config::load_or_create_with_dropins(
+                &paths_for_reload.config,
+                &paths_for_reload.example,
+                &paths_for_reload.override_file,
+                &paths_for_reload.dropins_dir,
+            ) {
+                Ok(mut cfg) => {
+                    cfg.socket = socket_override.clone();
+                    if let Err(e) = supervisor.reload(cfg) {
+                        hub.emit_init(LogLevel::Error, format!("config reload apply failed: {e}"));
+                    }
+                }
+                Err(e) => {
+                    hub.emit_init(
+                        LogLevel::Warn,
+                        format!("config reload ignored (keep old): {e}"),
+                    );
+                }
+            }
         }
 
         if let Some(mode) = take_shutdown() {

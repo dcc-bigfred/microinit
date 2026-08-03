@@ -1,14 +1,14 @@
 #!/bin/sh
 # early-boot.sh — portable preliminary mounts for microinit (PID 1).
-# Override on device: $BIGFRED_DATA_DIR/etc/microinit/early-boot.sh
-# Env: BIGFRED_DATA_DIR, DATA_DIR, MICROINIT_LOGS_TTY, MICROINIT_INIT_LOGS_TTY, MICROINIT_CONSOLE
+# Override on device: $DATA_DIR/etc/microinit/early-boot.sh
+# Env: DATA_DIR, MICROINIT_LOGS_TTY, MICROINIT_INIT_LOGS_TTY, MICROINIT_CONSOLE
 #
 # 1) Mount essential pseudo-filesystems (proc, sysfs, devtmpfs, …)
 # 2) Apply /etc/fstab via `mount -a`
 #
 # Product-specific setup (data partitions, seeding, shadow bind) belongs in a
 # distro overlay that replaces this script, or in the data-root override
-# ($BIGFRED_DATA_DIR/etc/microinit/early-boot.sh).
+# ($DATA_DIR/etc/microinit/early-boot.sh).
 #
 # Exit 0 on success. Non-zero aborts microinit boot when required.
 

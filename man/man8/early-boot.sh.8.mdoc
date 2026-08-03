@@ -17,7 +17,7 @@ Search order:
 .It
 .Pa /data/etc/microinit/early-boot.sh
 .Pq if present ; under
-.Ev BIGFRED_DATA_DIR
+.Ev DATA_DIR
 when set
 .It
 .Pa /etc/microinit/early-boot.sh
@@ -48,13 +48,9 @@ with a distro-specific script
 or an override under the data root; otherwise the embedded portable script runs.
 .Ss Environment
 .Bl -tag -width MICROINIT_INIT_LOGS_TTY
-.It Ev BIGFRED_DATA_DIR
-Persistent data root
-.Pq absolute path ; same as BigFred
 .It Ev DATA_DIR
-Fallback data root when
-.Ev BIGFRED_DATA_DIR
-is unset
+Persistent data root
+.Pq absolute path ; default Pa /data
 .It Ev MICROINIT_LOGS_TTY
 Service logs TTY path from
 .Nm microinit Cm init

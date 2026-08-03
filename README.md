@@ -4,15 +4,16 @@ Lightweight PID 1 init system and service supervisor for BigFred OS.
 
 ## Features
 
-- Declarative services in `/data/etc/microinit.json`
-  (override root with `BIGFRED_DATA_DIR` or `DATA_DIR`, same as BigFred)
+- Declarative services in `/data/etc/microinit.json` (override root with `DATA_DIR`)
+- Drop-ins under `$DATA_DIR/etc/microinit.d/services/**/*.json` (lexicographic later-wins)
+- inotify hot-reload of JSON config (no polling)
+- `microinit supervise` for containers (no early-boot / getty / TTYs)
 - Thread-per-service supervision with optional restart + backoff
 - Unix socket IPC (`start` / `stop` / `restart` / `enable` / `disable` / `list` / `logs`)
-- Mixed service logs on a dedicated TTY (default `/dev/tty2`)
-- microinit operational logs on a dedicated TTY (default `/dev/tty3`)
-- Systemd-style `[ OK ]` / `[ FAIL ]` on the console
-- Early boot via `/etc/microinit/early-boot.sh` (or data-root override); if neither
-  exists, the portable script embedded in the binary runs
+- Optional OpenTelemetry metrics (on by default; disable with `--no-default-features`) → Grafana Alloy when `openTelemetry.enable` is true
+- Mixed service logs on a dedicated TTY (default `/dev/tty2`); init logs on `/dev/tty3`
+- Early boot via `/etc/microinit/early-boot.sh` (or `$DATA_DIR/etc/microinit/early-boot.sh`);
+  embedded portable script if neither exists
 
 ## Build
 
@@ -20,6 +21,8 @@ Lightweight PID 1 init system and service supervisor for BigFred OS.
 export RUSTUP_TOOLCHAIN=stable
 make build
 make release
+cargo build --release                        # includes OpenTelemetry exporter
+cargo build --release --no-default-features  # without OpenTelemetry
 make release-musl   # aarch64-unknown-linux-musl static
 make test
 make man
@@ -27,25 +30,9 @@ make man
 
 ## Tests
 
-Tests live in `tests/` against the `microinit` library (`src/lib.rs`):
-
-```text
-tests/
-  config_test.rs
-  console_test.rs
-  early_boot_test.rs
-  graph_test.rs
-  ipc_test.rs
-  logs_test.rs
-  protocol_test.rs
-  service_test.rs
-  shutdown_test.rs
-  signals_test.rs
-  supervisor_test.rs
-```
-
 ```bash
 cargo test
+cargo test --no-default-features
 ```
 
 ## Local test harness
@@ -54,44 +41,53 @@ cargo test
 ./examples/local-test/run.sh
 ```
 
-Uses `examples/local-test/data` as `BIGFRED_DATA_DIR`, skips early-boot, and opens two
-xterms (`/dev/pts/*`) for service logs and init logs. See `examples/local-test/README.md`.
+Uses `examples/local-test/data` as `DATA_DIR`, skips early-boot, and opens two xterms for
+service / init logs.
+
+## OpenTelemetry → Grafana Alloy
+
+Default builds include the OTLP exporter. Enable it at runtime in config:
+
+```json
+"openTelemetry": {
+  "enable": true,
+  "endpoint": "http://127.0.0.1:4318",
+  "protocol": "http",
+  "serviceName": "microinit",
+  "exportIntervalSecs": 15
+}
+```
+
+See [`grafana/alloy/microinit.alloy`](grafana/alloy/microinit.alloy) and
+[`grafana/dashboards/microinit.json`](grafana/dashboards/microinit.json).
 
 ## CI / distribution
 
-GitHub Actions (`.github/workflows/`):
-
-- **CI** — on PR and push to `main`/`master`: `fmt` + `clippy` + `test`, then static
-  `aarch64-unknown-linux-musl` build. On push to `main`/`master`, publishes an ORAS
-  OCI artifact to GHCR.
-- **Release** — on `v*` tags: waits for CI, uploads assets to the GitHub Release, and
-  retags the OCI image to `v*` and `latest-release`.
-
-```text
-ghcr.io/dcc-bigfred/microinit-linux-arm64:main
-ghcr.io/dcc-bigfred/microinit-linux-arm64:sha-<7>
-ghcr.io/dcc-bigfred/microinit-linux-arm64:latest-release
-ghcr.io/dcc-bigfred/microinit-linux-arm64:v0.1.0
-```
-
-Pull example:
+- **ORAS** (arm64 + early-boot): `ghcr.io/dcc-bigfred/microinit-linux-arm64`
+- **Container** (distroless multiarch, `supervise`): `ghcr.io/dcc-bigfred/microinit`
 
 ```bash
+docker run --rm -v "$PWD/data:/data" ghcr.io/dcc-bigfred/microinit:main
+# ENTRYPOINT /microinit  CMD supervise
 oras pull ghcr.io/dcc-bigfred/microinit-linux-arm64:latest-release -o ./out
-# out/microinit-linux-arm64  out/early-boot.sh
 ```
 
 ## CLI
 
 ```text
-microinit init [--logs-tty=/dev/tty2] [--init-logs-tty=/dev/tty3] [--console=/dev/tty1] [--no-early-boot]
+microinit [--socket PATH] init …
+microinit [--socket PATH] supervise [--config PATH] [--log-to-files]
 microinit start|stop|restart|enable|disable <name>
 microinit list
 microinit logs [name] [--follow] [--lines N]
 ```
 
-See `man/man8/microinit.8.mdoc` and `PLAN.md` for architecture.
+See `man/man8/microinit.8.mdoc` and `man/man5/microinit.json.5.mdoc`.
 
 ## License
 
 MIT
+
+## Documentation
+
+- [Architecture](docs/architecture.md) — design overview, `init`/`supervise`, config, reload, OTel, distribution

@@ -13,6 +13,7 @@
 
 pub mod cli;
 pub mod config;
+pub mod config_watch;
 pub mod console;
 pub mod constants;
 pub mod datadir;
@@ -22,6 +23,8 @@ pub mod graph;
 pub mod init;
 pub mod ipc;
 pub mod logs;
+#[cfg(feature = "otel")]
+pub mod otel;
 pub mod protocol;
 pub mod reaper;
 pub mod service;

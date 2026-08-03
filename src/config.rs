@@ -16,7 +16,7 @@ pub const DEFAULT_LOG_LINES: usize = 300;
 pub const DEFAULT_EARLY_BOOT: &str = "/etc/microinit/early-boot.sh";
 
 /// Hub-default config path (`/data/etc/...` when data root is unset).
-/// Prefer [`default_config_path`] which honors `BIGFRED_DATA_DIR` / `DATA_DIR`.
+/// Prefer [`default_config_path`] which honors `DATA_DIR`.
 pub const DEFAULT_CONFIG_PATH: &str = "/data/etc/microinit.json";
 
 #[must_use]
@@ -35,6 +35,11 @@ pub fn default_override_path() -> PathBuf {
 }
 
 #[must_use]
+pub fn default_dropins_dir() -> PathBuf {
+    crate::datadir::path(["etc", "microinit.d", "services"])
+}
+
+#[must_use]
 pub fn default_early_boot_override_path() -> PathBuf {
     crate::datadir::path(["etc", "microinit", "early-boot.sh"])
 }
@@ -44,7 +49,7 @@ pub fn default_logs_dir() -> PathBuf {
     crate::datadir::path(["logs"])
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct LogsConfig {
     #[serde(default = "default_logs_tty")]
@@ -102,7 +107,7 @@ impl LogsConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ServiceConfig {
     pub name: String,
@@ -203,6 +208,52 @@ impl ServiceConfig {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenTelemetryConfig {
+    #[serde(default)]
+    pub enable: bool,
+    #[serde(default = "default_otel_endpoint")]
+    pub endpoint: String,
+    #[serde(default = "default_otel_protocol")]
+    pub protocol: String,
+    #[serde(default = "default_otel_service_name")]
+    pub service_name: String,
+    #[serde(default = "default_otel_export_interval")]
+    pub export_interval_secs: u64,
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
+}
+
+fn default_otel_endpoint() -> String {
+    "http://127.0.0.1:4318".into()
+}
+
+fn default_otel_protocol() -> String {
+    "http".into()
+}
+
+fn default_otel_service_name() -> String {
+    "microinit".into()
+}
+
+fn default_otel_export_interval() -> u64 {
+    15
+}
+
+impl Default for OpenTelemetryConfig {
+    fn default() -> Self {
+        Self {
+            enable: false,
+            endpoint: default_otel_endpoint(),
+            protocol: default_otel_protocol(),
+            service_name: default_otel_service_name(),
+            export_interval_secs: default_otel_export_interval(),
+            headers: HashMap::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Config {
@@ -214,6 +265,8 @@ pub struct Config {
     pub socket: String,
     #[serde(default = "default_console")]
     pub console: String,
+    #[serde(default)]
+    pub open_telemetry: OpenTelemetryConfig,
     #[serde(default)]
     pub services: Vec<ServiceConfig>,
 }
@@ -237,6 +290,7 @@ impl Default for Config {
             logs: LogsConfig::default(),
             socket: default_socket(),
             console: default_console(),
+            open_telemetry: OpenTelemetryConfig::default(),
             services: Vec::new(),
         }
     }
@@ -334,11 +388,83 @@ fn write_json_atomic(path: &Path, value: &impl Serialize) -> Result<()> {
     Ok(())
 }
 
-/// Ensure config directory + default config + example exist; load and apply override.
+/// Drop-in file: `{ "services": [ ... ] }` under `microinit.d/services/**/*.json`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DropinFile {
+    #[serde(default)]
+    services: Vec<ServiceConfig>,
+}
+
+/// Collect relative paths of `*.json` under `root`, sorted lexicographically.
+fn collect_dropin_rel_paths(root: &Path) -> Result<Vec<PathBuf>> {
+    let mut out = Vec::new();
+    if !root.is_dir() {
+        return Ok(out);
+    }
+    fn walk(dir: &Path, root: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
+        let mut entries: Vec<_> = fs::read_dir(dir)?.filter_map(|e| e.ok()).collect();
+        entries.sort_by_key(|e| e.file_name());
+        for entry in entries {
+            let path = entry.path();
+            let ft = entry.file_type()?;
+            if ft.is_dir() {
+                walk(&path, root, out)?;
+            } else if ft.is_file() && path.extension().and_then(|s| s.to_str()) == Some("json") {
+                if let Ok(rel) = path.strip_prefix(root) {
+                    out.push(rel.to_path_buf());
+                }
+            }
+        }
+        Ok(())
+    }
+    walk(root, root, &mut out)?;
+    out.sort();
+    Ok(out)
+}
+
+/// Merge drop-in service definitions into `cfg`.
+///
+/// Files under `dropins_root` are processed in lexicographic order of their
+/// relative path; for a given service `name`, later files win.
+pub fn merge_service_dropins(cfg: &mut Config, dropins_root: &Path) -> Result<()> {
+    let rels = collect_dropin_rel_paths(dropins_root)?;
+    for rel in rels {
+        let path = dropins_root.join(&rel);
+        let data = fs::read_to_string(&path)?;
+        let dropin: DropinFile = serde_json::from_str(&data)
+            .map_err(|e| Error::Config(format!("drop-in {}: {e}", path.display())))?;
+        for svc in dropin.services {
+            if let Some(existing) = cfg.services.iter_mut().find(|s| s.name == svc.name) {
+                *existing = svc;
+            } else {
+                cfg.services.push(svc);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Ensure config directory + default config + example exist; load, merge drop-ins, apply override.
 pub fn load_or_create(
     config_path: &Path,
     example_path: &Path,
     override_path: &Path,
+) -> Result<Config> {
+    load_or_create_with_dropins(
+        config_path,
+        example_path,
+        override_path,
+        &default_dropins_dir(),
+    )
+}
+
+/// Like [`load_or_create`] with an explicit drop-ins directory (tests / custom layouts).
+pub fn load_or_create_with_dropins(
+    config_path: &Path,
+    example_path: &Path,
+    override_path: &Path,
+    dropins_root: &Path,
 ) -> Result<Config> {
     if let Some(parent) = config_path.parent() {
         fs::create_dir_all(parent)?;
@@ -352,9 +478,12 @@ pub fn load_or_create(
         save_config(config_path, &Config::default())?;
     }
 
-    let mut cfg = load_config(config_path)?;
+    let data = fs::read_to_string(config_path)?;
+    let mut cfg: Config = serde_json::from_str(&data)?;
+    merge_service_dropins(&mut cfg, dropins_root)?;
     let ov = load_override(override_path)?;
     apply_enabled_override(&mut cfg, &ov);
+    cfg.validate()?;
     Ok(cfg)
 }
 
@@ -370,6 +499,7 @@ pub fn example_config() -> Config {
         },
         socket: DEFAULT_SOCKET.to_string(),
         console: DEFAULT_CONSOLE.to_string(),
+        open_telemetry: OpenTelemetryConfig::default(),
         services: vec![
             ServiceConfig {
                 name: "network".into(),
@@ -438,6 +568,7 @@ pub struct Paths {
     pub config: PathBuf,
     pub example: PathBuf,
     pub override_file: PathBuf,
+    pub dropins_dir: PathBuf,
     pub early_boot: PathBuf,
     pub early_boot_override: PathBuf,
 }
@@ -448,6 +579,7 @@ impl Default for Paths {
             config: default_config_path(),
             example: default_example_path(),
             override_file: default_override_path(),
+            dropins_dir: default_dropins_dir(),
             early_boot: PathBuf::from(DEFAULT_EARLY_BOOT),
             early_boot_override: default_early_boot_override_path(),
         }

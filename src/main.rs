@@ -1,6 +1,6 @@
 //! microinit — PID 1 init system and service supervisor for BigFred OS.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
@@ -52,6 +52,18 @@ enum Commands {
         #[arg(long)]
         log_to_files: bool,
     },
+    /// Run as container / host supervisor (no early-boot, no getty, no TTYs)
+    Supervise {
+        /// Console device for [ OK ]/[ FAIL ] status (optional; often /dev/null)
+        #[arg(long, default_value = "/dev/null")]
+        console: String,
+        /// Config file path
+        #[arg(long, default_value_os_t = default_config_path())]
+        config: PathBuf,
+        /// Append service/init logs to files under logs.dir (overrides config logToFiles)
+        #[arg(long)]
+        log_to_files: bool,
+    },
     /// Start a service
     Start { name: String },
     /// Stop a service
@@ -76,8 +88,22 @@ enum Commands {
     },
 }
 
+fn paths_for_config(config_path: &Path) -> config::Paths {
+    let mut paths = config::Paths {
+        config: config_path.to_path_buf(),
+        ..config::Paths::default()
+    };
+    if let Some(parent) = config_path.parent() {
+        paths.example = parent.join("microinit.json.example");
+        paths.override_file = parent.join("microinit.services.enabled-override.json");
+        paths.dropins_dir = parent.join("microinit.d").join("services");
+    }
+    paths
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    let socket = cli.socket.display().to_string();
 
     let command = match cli.command {
         Some(c) => c,
@@ -105,25 +131,34 @@ fn main() -> ExitCode {
             no_early_boot,
             allow_no_early_boot,
             log_to_files,
-        } => {
-            let mut paths = config::Paths {
-                config: config_path.clone(),
-                ..config::Paths::default()
-            };
-            if let Some(parent) = config_path.parent() {
-                paths.example = parent.join("microinit.json.example");
-                paths.override_file = parent.join("microinit.services.enabled-override.json");
-            }
-            init::run(init::InitOpts {
-                logs_tty,
-                init_logs_tty,
-                console,
-                paths,
-                skip_early_boot: no_early_boot,
-                require_early_boot: !allow_no_early_boot && !no_early_boot,
-                log_to_files,
-            })
-        }
+        } => init::run(init::InitOpts {
+            logs_tty,
+            init_logs_tty,
+            console,
+            paths: paths_for_config(&config_path),
+            skip_early_boot: no_early_boot,
+            require_early_boot: !allow_no_early_boot && !no_early_boot,
+            log_to_files,
+            spawn_getty: true,
+            attach_ttys: true,
+            socket,
+        }),
+        Commands::Supervise {
+            console,
+            config: config_path,
+            log_to_files,
+        } => init::run(init::InitOpts {
+            logs_tty: DEFAULT_LOGS_TTY.to_string(),
+            init_logs_tty: DEFAULT_INIT_LOGS_TTY.to_string(),
+            console,
+            paths: paths_for_config(&config_path),
+            skip_early_boot: true,
+            require_early_boot: false,
+            log_to_files,
+            spawn_getty: false,
+            attach_ttys: false,
+            socket,
+        }),
         Commands::Start { name } => cli::cmd_start(&cli.socket, &name),
         Commands::Stop { name } => cli::cmd_stop(&cli.socket, &name),
         Commands::Restart { name } => cli::cmd_restart(&cli.socket, &name),

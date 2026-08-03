@@ -312,3 +312,54 @@ fn camel_case_json_fields() {
     assert_eq!(cfg.get("x").unwrap().success_exit_codes, vec![0, 3]);
     assert_eq!(cfg.get("x").unwrap().depends_on, vec!["y".to_string()]);
 }
+
+#[test]
+fn dropins_merge_lex_later_wins() {
+    let dir = temp_dir("dropins");
+    let config = dir.join("microinit.json");
+    let example = dir.join("microinit.json.example");
+    let override_f = dir.join("override.json");
+    let dropins = dir.join("microinit.d/services");
+    fs::create_dir_all(dropins.join("a")).unwrap();
+    fs::create_dir_all(dropins.join("b/nested")).unwrap();
+
+    let mut base = Config::default();
+    base.services.push(minimal_svc("keep"));
+    base.services.push({
+        let mut s = minimal_svc("overlay");
+        s.cmd = Some("/bin/base".into());
+        s
+    });
+    save_config(&config, &base).unwrap();
+
+    fs::write(
+        dropins.join("a/10-overlay.json"),
+        r#"{"services":[{"name":"overlay","cmd":"/bin/from-a","daemon":true}]}"#,
+    )
+    .unwrap();
+    fs::write(
+        dropins.join("b/nested/20-overlay.json"),
+        r#"{"services":[{"name":"overlay","cmd":"/bin/from-b","daemon":true},{"name":"added","cmd":"/bin/added","daemon":true}]}"#,
+    )
+    .unwrap();
+
+    let cfg = load_or_create_with_dropins(&config, &example, &override_f, &dropins).unwrap();
+    assert_eq!(
+        cfg.get("overlay").unwrap().cmd.as_deref(),
+        Some("/bin/from-b")
+    );
+    assert!(cfg.get("added").is_some());
+    assert!(cfg.get("keep").is_some());
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn open_telemetry_defaults_from_json() {
+    let raw = r#"{"openTelemetry":{"enable":true,"endpoint":"http://alloy:4318"}}"#;
+    let cfg: Config = serde_json::from_str(raw).unwrap();
+    assert!(cfg.open_telemetry.enable);
+    assert_eq!(cfg.open_telemetry.endpoint, "http://alloy:4318");
+    assert_eq!(cfg.open_telemetry.protocol, "http");
+    assert_eq!(cfg.open_telemetry.service_name, "microinit");
+    assert_eq!(cfg.open_telemetry.export_interval_secs, 15);
+}

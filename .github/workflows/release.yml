@@ -61,8 +61,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          mkdir -p release-assets
           gh run download "${{ steps.ci.outputs.run_id }}" \
-            --name binaries \
+            --name binaries-arm64 \
             --dir release-assets
 
       - name: Create release if missing
@@ -95,6 +96,9 @@ jobs:
       - name: Set up ORAS
         uses: oras-project/setup-oras@v1
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
@@ -102,8 +106,11 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Retag microinit OCI artifact from main
+      - name: Retag microinit ORAS artifact from main
         run: ./scripts/retag-oci-microinit.sh "${GITHUB_REF_NAME}"
+
+      - name: Retag distroless container image from main
+        run: ./scripts/retag-oci-microinit-image.sh "${GITHUB_REF_NAME}"
 
       - name: Job summary
         run: |
@@ -111,6 +118,7 @@ jobs:
             echo "### Release ${GITHUB_REF_NAME}"
             echo ""
             echo "- GitHub Release assets uploaded"
-            echo "- OCI: \`ghcr.io/dcc-bigfred/microinit-linux-arm64:${GITHUB_REF_NAME}\`"
-            echo "- OCI: \`ghcr.io/dcc-bigfred/microinit-linux-arm64:latest-release\`"
+            echo "- ORAS: \`ghcr.io/dcc-bigfred/microinit-linux-arm64:${GITHUB_REF_NAME}\`"
+            echo "- Image: \`ghcr.io/dcc-bigfred/microinit:${GITHUB_REF_NAME}\`"
+            echo "- Image: \`ghcr.io/dcc-bigfred/microinit:latest-release\`"
           } >> "$GITHUB_STEP_SUMMARY"

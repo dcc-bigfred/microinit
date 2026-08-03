@@ -25,6 +25,7 @@ fn temp_paths(label: &str) -> (Paths, std::path::PathBuf) {
         config: dir.join("data/etc/microinit.json"),
         example: dir.join("data/etc/microinit.json.example"),
         override_file: dir.join("data/etc/override.json"),
+        dropins_dir: dir.join("data/etc/microinit.d/services"),
         early_boot: dir.join("etc/early-boot.sh"),
         early_boot_override: dir.join("data/etc/microinit/early-boot.sh"),
     };
@@ -94,7 +95,7 @@ fn run_script_success_and_failure() {
     let (paths, dir) = temp_paths("run");
     write_exec(
         &paths.early_boot,
-        "#!/bin/sh\ntest \"$MICROINIT_LOGS_TTY\" = /dev/ttyX \\\n  -a \"$MICROINIT_INIT_LOGS_TTY\" = /dev/ttyZ \\\n  -a -n \"$BIGFRED_DATA_DIR\"\n",
+        "#!/bin/sh\ntest \"$MICROINIT_LOGS_TTY\" = /dev/ttyX \\\n  -a \"$MICROINIT_INIT_LOGS_TTY\" = /dev/ttyZ \\\n  -a -n \"$DATA_DIR\"\n",
     );
     run_script(&paths.early_boot, "/dev/ttyX", "/dev/ttyZ", "/dev/ttyY").unwrap();
 

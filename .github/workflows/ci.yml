@@ -38,16 +38,41 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
 
+      - name: Clippy (no otel)
+        run: cargo clippy --all-targets --no-default-features -- -D warnings
+
       - name: Test
         run: cargo test --locked
+
+      - name: Test (no otel)
+        run: cargo test --locked --no-default-features
 
       - name: Test (release-assertions)
         run: cargo test --locked --profile release-assertions
 
   build:
-    name: Build (linux/arm64 musl)
+    name: Build musl (${{ matrix.name }})
     needs: test
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - name: arm64
+            rust_target: aarch64-unknown-linux-musl
+            dist_name: microinit-linux-arm64
+            cross_tarball: aarch64-linux-musl-cross.tgz
+            cross_prefix: aarch64-linux-musl
+            linker_env: CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER
+            cc_env: CC_aarch64_unknown_linux_musl
+            ar_env: AR_aarch64_unknown_linux_musl
+          - name: amd64
+            rust_target: x86_64-unknown-linux-musl
+            dist_name: microinit-linux-amd64
+            cross_tarball: x86_64-linux-musl-cross.tgz
+            cross_prefix: x86_64-linux-musl
+            linker_env: CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER
+            cc_env: CC_x86_64_unknown_linux_musl
+            ar_env: AR_x86_64_unknown_linux_musl
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -55,54 +80,55 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-unknown-linux-musl
+          targets: ${{ matrix.rust_target }}
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
-          key: aarch64-musl
+          key: ${{ matrix.name }}-musl
 
-      - name: Install aarch64 musl cross toolchain
+      - name: Install musl cross toolchain
         run: |
           set -euo pipefail
-          curl -fsSL https://musl.cc/aarch64-linux-musl-cross.tgz \
+          curl -fsSL "https://musl.cc/${{ matrix.cross_tarball }}" \
             | sudo tar -xz -C /opt
-          echo "/opt/aarch64-linux-musl-cross/bin" >> "$GITHUB_PATH"
+          echo "/opt/${{ matrix.cross_prefix }}-cross/bin" >> "$GITHUB_PATH"
 
       - name: Build static binary + package dist
         run: |
           set -euo pipefail
-          export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-musl-gcc
-          export CC_aarch64_unknown_linux_musl=aarch64-linux-musl-gcc
-          export AR_aarch64_unknown_linux_musl=aarch64-linux-musl-ar
+          export ${{ matrix.linker_env }}=${{ matrix.cross_prefix }}-gcc
+          export ${{ matrix.cc_env }}=${{ matrix.cross_prefix }}-gcc
+          export ${{ matrix.ar_env }}=${{ matrix.cross_prefix }}-ar
           export RUSTFLAGS='-C target-feature=+crt-static'
 
-          cargo build --release --target aarch64-unknown-linux-musl
+          cargo build --release --target ${{ matrix.rust_target }}
 
           mkdir -p dist
-          cp -f target/aarch64-unknown-linux-musl/release/microinit dist/microinit-linux-arm64
-          chmod 755 dist/microinit-linux-arm64
-          cp -f scripts/early-boot.sh dist/early-boot.sh
-          chmod 755 dist/early-boot.sh
+          cp -f "target/${{ matrix.rust_target }}/release/microinit" "dist/${{ matrix.dist_name }}"
+          chmod 755 "dist/${{ matrix.dist_name }}"
 
-          make man
-          mkdir -p dist/man/man5 dist/man/man8
-          cp -f man/man5/*.gz dist/man/man5/
-          cp -f man/man8/*.gz dist/man/man8/
+          if [ "${{ matrix.name }}" = "arm64" ]; then
+            cp -f scripts/early-boot.sh dist/early-boot.sh
+            chmod 755 dist/early-boot.sh
+            make man
+            mkdir -p dist/man/man5 dist/man/man8
+            cp -f man/man5/*.gz dist/man/man5/
+            cp -f man/man8/*.gz dist/man/man8/
+            (
+              cd dist
+              sha256sum microinit-linux-arm64 early-boot.sh \
+                man/man5/*.gz man/man8/*.gz > SHA256SUMS
+            )
+          fi
 
-          (
-            cd dist
-            sha256sum microinit-linux-arm64 early-boot.sh \
-              man/man5/*.gz man/man8/*.gz > SHA256SUMS
-          )
-
-          file dist/microinit-linux-arm64
-          ls -lh dist/microinit-linux-arm64
+          file "dist/${{ matrix.dist_name }}"
+          ls -lh "dist/${{ matrix.dist_name }}"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: binaries
+          name: binaries-${{ matrix.name }}
           path: dist/
           if-no-files-found: error
           retention-days: 90
@@ -119,10 +145,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download binaries
+      - name: Download arm64 binaries
         uses: actions/download-artifact@v4
         with:
-          name: binaries
+          name: binaries-arm64
           path: dist/
 
       - name: Set up ORAS
@@ -141,9 +167,62 @@ jobs:
       - name: Job summary
         run: |
           {
-            echo "### OCI publish"
+            echo "### OCI publish (ORAS)"
             echo ""
             echo "- Image: \`ghcr.io/dcc-bigfred/microinit-linux-arm64\`"
             echo "- Tags: \`main\`, \`sha-${GITHUB_SHA::7}\`"
-            echo "- Commit: \`${GITHUB_SHA}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  publish-image:
+    name: Publish distroless container image
+    needs: build
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download arm64 binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries-arm64
+          path: dist-arm64/
+
+      - name: Download amd64 binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries-amd64
+          path: dist-amd64/
+
+      - name: Stage binaries
+        run: |
+          mkdir -p dist
+          cp -f dist-arm64/microinit-linux-arm64 dist/
+          cp -f dist-amd64/microinit-linux-amd64 dist/
+          chmod 755 dist/microinit-linux-arm64 dist/microinit-linux-amd64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish multiarch image
+        run: ./scripts/publish-oci-microinit-image.sh
+
+      - name: Job summary
+        run: |
+          {
+            echo "### Container image"
+            echo ""
+            echo "- Image: \`ghcr.io/dcc-bigfred/microinit\`"
+            echo "- Tags: \`main\`, \`sha-${GITHUB_SHA::7}\`"
+            echo "- Entrypoint: \`/microinit supervise\`"
           } >> "$GITHUB_STEP_SUMMARY"

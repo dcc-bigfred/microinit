@@ -6,6 +6,7 @@
 .Nd system init and service supervisor for BigFred OS
 .Sh SYNOPSIS
 .Nm
+.Op Fl -socket Ns = Ns Ar path
 .Cm init
 .Op Fl -logs-tty Ns = Ns Ar path
 .Op Fl -init-logs-tty Ns = Ns Ar path
@@ -15,11 +16,20 @@
 .Op Fl -allow-no-early-boot
 .Op Fl -log-to-files
 .Nm
+.Op Fl -socket Ns = Ns Ar path
+.Cm supervise
+.Op Fl -console Ns = Ns Ar path
+.Op Fl -config Ns = Ns Ar path
+.Op Fl -log-to-files
+.Nm
+.Op Fl -socket Ns = Ns Ar path
 .Cm start|stop|restart|enable|disable
 .Ar name
 .Nm
+.Op Fl -socket Ns = Ns Ar path
 .Cm list
 .Nm
+.Op Fl -socket Ns = Ns Ar path
 .Cm logs
 .Op Ar name
 .Op Fl -follow
@@ -30,6 +40,12 @@ is a PID 1 init system that loads a declarative JSON service list, starts
 services (foreground sequentially, background in parallel), supervises
 daemons with optional restart/backoff, and exposes a Unix-socket control
 API used by the same binary's management subcommands.
+.Pp
+.Cm supervise
+uses the same runtime as
+.Cm init
+but skips early-boot, getty, and TTY attach
+.Pq suitable for containers / distroless images .
 .Pp
 When invoked as
 .Pa /sbin/init
@@ -43,10 +59,12 @@ mode.
 .It
 Run early-boot script
 .Xr early-boot.sh 8
-.Pq on-disk override/base, else embedded portable script
+.Pq on-disk override/base, else embedded portable script; skipped by supervise
 .It
 Create or load
-.Xr microinit.json 5
+.Xr microinit.json 5 ,
+merge drop-ins under
+.Pa $DATA_DIR/etc/microinit.d/services/ ,
 and apply
 .Xr microinit.services.enabled-override.json 5
 .It
@@ -60,9 +78,12 @@ Start enabled services; print
 on the console
 .It
 Write microinit operational logs to the init-logs TTY
-.Pq default Pa /dev/tty3
+.Pq default Pa /dev/tty3 ; skipped when TTY attach is disabled
 .It
 Respawn getty on the console TTY
+.Pq init only, when PID 1
+.It
+Watch config JSON via inotify and reload services
 .It
 Supervise processes, reap zombies, serve IPC
 .El

@@ -115,7 +115,7 @@ if [[ -z "$CONSOLE_TTY" || ! -e "$CONSOLE_TTY" ]]; then
 	CONSOLE_TTY="/dev/null"
 fi
 
-echo "BIGFRED_DATA_DIR=$DATA"
+echo "DATA_DIR=$DATA"
 echo "service logs → $SERVICE_PTS"
 echo "init logs    → $INIT_PTS"
 echo "console      → $CONSOLE_TTY"
@@ -124,7 +124,7 @@ echo
 echo "Ctrl-C stops microinit and closes the xterms."
 echo
 
-export BIGFRED_DATA_DIR="$DATA"
+export DATA_DIR="$DATA"
 # Keep socket path aligned with generated config for CLI subcommands.
 export MICROINIT_SOCKET="$DATA/run/microinit.sock"
 

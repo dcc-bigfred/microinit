@@ -44,9 +44,36 @@ is true (default
 Unix control socket path
 .It Cm console
 Console TTY for status and getty
+.It Cm openTelemetry.enable
+If true and the binary includes OpenTelemetry
+.Pq default build; omit with
+.Cm cargo build Fl -no-default-features
+.Pc ,
+export OTLP metrics to
+.Cm openTelemetry.endpoint
+.Pq Grafana Alloy OTLP/HTTP default
+.Pa http://127.0.0.1:4318
+.It Cm openTelemetry.endpoint , protocol , serviceName , exportIntervalSecs , headers
+OTLP client parameters
+.Pq protocol http only in the current build
 .It Cm services
 Array of service objects
 .El
+.Ss Drop-in directories
+After loading this file,
+.Nm
+merges
+.Pa $DATA_DIR/etc/microinit.d/services/**/*.json
+in lexicographic path order
+.Pq later wins for the same service name ,
+then applies
+.Xr microinit.services.enabled-override.json 5 .
+Changes to these JSON files are picked up via Linux inotify
+.Pq hot-reload without restarting microinit ;
+.Cm socket
+and
+.Cm logs.*
+changes require a process restart.
 .Ss Service fields
 .Bl -tag -width successExitCodes
 .It Cm name

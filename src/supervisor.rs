@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use nix::unistd::Pid;
 
@@ -32,6 +32,18 @@ struct Runtime {
     pid: Option<i32>,
     restarts: u32,
     enabled: bool,
+    running_since: Option<Instant>,
+}
+
+/// Snapshot of a service for metrics exporters.
+#[derive(Debug, Clone)]
+pub struct ServiceMetrics {
+    pub name: String,
+    pub restarts: u32,
+    pub pid: Option<i32>,
+    pub enabled: bool,
+    pub state: ServiceState,
+    pub uptime_secs: f64,
 }
 
 struct Shared {
@@ -54,6 +66,15 @@ impl Shared {
                     // keep existing pid
                 }
                 _ => rt.pid = None,
+            }
+            match state {
+                ServiceState::Running => {
+                    if rt.running_since.is_none() {
+                        rt.running_since = Some(Instant::now());
+                    }
+                }
+                ServiceState::Starting | ServiceState::Restarting => {}
+                _ => rt.running_since = None,
             }
         }
         self.cv.notify_all();
@@ -197,6 +218,7 @@ impl Supervisor {
                     pid: None,
                     restarts: 0,
                     enabled: svc.enabled,
+                    running_since: None,
                 },
             );
         }
@@ -329,14 +351,7 @@ impl Supervisor {
         let services: Vec<ServiceConfig> = mutex_lock(&self.config).services.clone();
 
         for svc in &services {
-            let (tx, rx) = std::sync::mpsc::channel();
-            mutex_lock(&self.ctl).insert(svc.name.clone(), tx);
-            let this = Arc::clone(self);
-            let cfg = svc.clone();
-            thread::Builder::new()
-                .name(format!("svc-{}", svc.name))
-                .spawn(move || this.monitor_loop(cfg, rx))
-                .map_err(|e| Error::Other(e.to_string()))?;
+            self.spawn_monitor(&svc.name)?;
         }
 
         ensure_reaper_thread();
@@ -379,13 +394,172 @@ impl Supervisor {
         Ok(())
     }
 
-    fn monitor_loop(self: Arc<Self>, cfg: ServiceConfig, rx: std::sync::mpsc::Receiver<CtlMsg>) {
-        let name = cfg.name.clone();
+    fn spawn_monitor(self: &Arc<Self>, name: &str) -> Result<()> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        mutex_lock(&self.ctl).insert(name.to_string(), tx);
+        let this = Arc::clone(self);
+        let n = name.to_string();
+        thread::Builder::new()
+            .name(format!("svc-{name}"))
+            .spawn(move || this.monitor_loop(n, rx))
+            .map_err(|e| Error::Other(e.to_string()))?;
+        Ok(())
+    }
+
+    fn service_cfg(&self, name: &str) -> Result<ServiceConfig> {
+        mutex_lock(&self.config)
+            .get(name)
+            .cloned()
+            .ok_or_else(|| Error::UnknownService(name.to_string()))
+    }
+
+    /// Current OpenTelemetry config (for the optional metrics thread).
+    #[must_use]
+    pub fn open_telemetry(&self) -> crate::config::OpenTelemetryConfig {
+        mutex_lock(&self.config).open_telemetry.clone()
+    }
+
+    /// Snapshot metrics for all known services.
+    #[must_use]
+    pub fn metrics_snapshot(&self) -> Vec<ServiceMetrics> {
+        let map = mutex_lock(&self.shared.runtimes);
+        let now = Instant::now();
+        let mut out: Vec<_> = map
+            .iter()
+            .map(|(name, rt)| ServiceMetrics {
+                name: name.clone(),
+                restarts: rt.restarts,
+                pid: rt.pid,
+                enabled: rt.enabled,
+                state: rt.state,
+                uptime_secs: rt
+                    .running_since
+                    .map(|t| now.saturating_duration_since(t).as_secs_f64())
+                    .unwrap_or(0.0),
+            })
+            .collect();
+        out.sort_by(|a, b| a.name.cmp(&b.name));
+        out
+    }
+
+    /// Apply a newly loaded config: add/remove/restart services as needed.
+    pub fn reload(self: &Arc<Self>, new_cfg: Config) -> Result<()> {
+        let old = mutex_lock(&self.config).clone();
+
+        if old.socket != new_cfg.socket {
+            self.hub.emit(
+                INIT_SERVICE,
+                LogLevel::Warn,
+                "reload: socket change ignored (restart microinit required)",
+            );
+        }
+        if old.logs != new_cfg.logs {
+            self.hub.emit(
+                INIT_SERVICE,
+                LogLevel::Warn,
+                "reload: logs.* change ignored (restart microinit required)",
+            );
+        }
+        if old.console != new_cfg.console {
+            self.hub.emit(
+                INIT_SERVICE,
+                LogLevel::Warn,
+                "reload: console change ignored (restart microinit required)",
+            );
+        }
+
+        let old_names: std::collections::HashSet<String> =
+            old.services.iter().map(|s| s.name.clone()).collect();
+        let new_names: std::collections::HashSet<String> =
+            new_cfg.services.iter().map(|s| s.name.clone()).collect();
+
+        // Stop + quit removed services while old definitions are still available.
+        for name in old_names.difference(&new_names) {
+            self.hub.emit(
+                INIT_SERVICE,
+                LogLevel::Info,
+                format!("reload: removing service {name}"),
+            );
+            let _ = self.send_ctl(name, CtlMsg::Stop);
+            thread::sleep(Duration::from_millis(200));
+            if let Some(tx) = mutex_lock(&self.ctl).remove(name) {
+                let _ = tx.send(CtlMsg::Quit);
+            }
+            mutex_lock(&self.shared.runtimes).remove(name);
+        }
+
+        let mut applied = new_cfg;
+        applied.socket = old.socket.clone();
+        applied.logs = old.logs.clone();
+        applied.console = old.console.clone();
+        *mutex_lock(&self.config) = applied.clone();
+
+        for svc in &applied.services {
+            if !old_names.contains(&svc.name) {
+                self.hub.emit(
+                    INIT_SERVICE,
+                    LogLevel::Info,
+                    format!("reload: adding service {}", svc.name),
+                );
+                mutex_lock(&self.shared.runtimes).insert(
+                    svc.name.clone(),
+                    Runtime {
+                        state: if svc.enabled {
+                            ServiceState::Pending
+                        } else {
+                            ServiceState::Disabled
+                        },
+                        pid: None,
+                        restarts: 0,
+                        enabled: svc.enabled,
+                        running_since: None,
+                    },
+                );
+                self.spawn_monitor(&svc.name)?;
+                if svc.enabled {
+                    let _ = self.send_ctl(&svc.name, CtlMsg::Start);
+                }
+                continue;
+            }
+
+            let Some(old_svc) = old.get(&svc.name) else {
+                continue;
+            };
+
+            if old_svc.enabled != svc.enabled {
+                self.shared.set_enabled(&svc.name, svc.enabled);
+                if svc.enabled {
+                    let _ = self.send_ctl(&svc.name, CtlMsg::Start);
+                } else {
+                    let _ = self.send_ctl(&svc.name, CtlMsg::Stop);
+                }
+            }
+
+            if !definition_eq(old_svc, svc) {
+                self.hub.emit(
+                    INIT_SERVICE,
+                    LogLevel::Info,
+                    format!("reload: definition changed for {}", svc.name),
+                );
+                if svc.enabled {
+                    let _ = self.send_ctl(&svc.name, CtlMsg::Restart);
+                }
+            }
+        }
+
+        self.hub
+            .emit(INIT_SERVICE, LogLevel::Info, "configuration reloaded");
+        Ok(())
+    }
+
+    fn monitor_loop(self: Arc<Self>, name: String, rx: std::sync::mpsc::Receiver<CtlMsg>) {
         let mut tracked: Option<i32> = None;
 
         loop {
             if self.shared.stop_all.load(Ordering::SeqCst) {
-                self.stop_tracked(&cfg, &mut tracked);
+                if let Ok(cfg) = self.service_cfg(&name) {
+                    self.stop_tracked(&cfg, &mut tracked);
+                }
                 self.shared.set_state(&name, ServiceState::Stopped, None);
                 break;
             }
@@ -397,6 +571,13 @@ impl Supervisor {
             };
 
             if let Some(msg) = msg {
+                let cfg = match self.service_cfg(&name) {
+                    Ok(c) => c,
+                    Err(_) => {
+                        // Service removed from config — exit monitor.
+                        break;
+                    }
+                };
                 match msg {
                     CtlMsg::Quit => {
                         self.stop_tracked(&cfg, &mut tracked);
@@ -421,7 +602,6 @@ impl Supervisor {
                             .emit(INIT_SERVICE, LogLevel::Info, format!("restarting {name}"));
                         self.stop_tracked(&cfg, &mut tracked);
                         if let Ok(restart) = cfg.resolve_restart() {
-                            // Prefer explicit restartCmd / `cmd restart` when available.
                             let code = run_shell(&restart, &cfg, &HashMap::new()).unwrap_or(1);
                             if cfg.daemon && cfg.is_success(code) {
                                 self.shared.set_state(&name, ServiceState::Running, None);
@@ -452,7 +632,9 @@ impl Supervisor {
             if let Some(pid) = tracked {
                 if let Some(code) = self.exits.take(pid) {
                     tracked = None;
-                    self.on_process_exit(&cfg, &mut tracked, code);
+                    if let Ok(cfg) = self.service_cfg(&name) {
+                        self.on_process_exit(&cfg, &mut tracked, code);
+                    }
                 }
             }
         }
@@ -645,4 +827,13 @@ impl Supervisor {
         }
         thread::sleep(SHUTDOWN_QUIT_WAIT);
     }
+}
+
+/// Compare service definitions ignoring `enabled` (handled separately on reload).
+fn definition_eq(a: &ServiceConfig, b: &ServiceConfig) -> bool {
+    let mut x = a.clone();
+    let mut y = b.clone();
+    x.enabled = true;
+    y.enabled = true;
+    x == y
 }

@@ -52,6 +52,7 @@ pub enum LogLevel {
     Stdout,
     Stderr,
     Info,
+    Warn,
     Error,
 }
 
@@ -61,6 +62,7 @@ impl LogLevel {
             Self::Stdout => "stdout",
             Self::Stderr => "stderr",
             Self::Info => "info",
+            Self::Warn => "warn",
             Self::Error => "error",
         }
     }
