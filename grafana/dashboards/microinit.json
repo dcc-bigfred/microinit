@@ -100,9 +100,21 @@
       ]
     },
     {
-      "title": "Service uptime",
+      "title": "Liveness probe failures",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "targets": [
+        {
+          "expr": "microinit_service_liveness_failures_total",
+          "legendFormat": "{{service}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Service uptime",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
       "targets": [
         {
           "expr": "microinit_service_uptime_seconds",
@@ -119,7 +131,7 @@
     {
       "title": "Service CPU ratio",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
       "targets": [
         {
           "expr": "microinit_service_cpu_ratio",
@@ -131,7 +143,7 @@
     {
       "title": "Service RSS memory",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
       "targets": [
         {
           "expr": "microinit_service_memory_bytes",
