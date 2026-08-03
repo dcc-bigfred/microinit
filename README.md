@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/logo.png" alt="microinit" width="240">
+</p>
+
 # microinit
 
 Lightweight PID 1 init system and service supervisor designed for BigFred OS.
