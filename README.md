@@ -1,13 +1,18 @@
 # microinit
 
-Lightweight PID 1 init system and service supervisor for BigFred OS.
+Lightweight PID 1 init system and service supervisor designed for BigFred OS.
+Works in embedded systems based on Linux as well as in containers.
+
+In **`supervise`** mode it can also act as a **supervisord replacement**: the same
+process watches a declarative JSON service list, restarts daemons, and exposes
+start/stop/logs over a Unix socket — without early-boot, getty, or console TTYs.
 
 ## Features
 
 - Declarative services in `/data/etc/microinit.json` (override root with `DATA_DIR`)
 - Drop-ins under `$DATA_DIR/etc/microinit.d/services/**/*.json` (lexicographic later-wins)
 - inotify hot-reload of JSON config (no polling)
-- `microinit supervise` for containers (no early-boot / getty / TTYs)
+- `microinit supervise` — container / host supervisor (supervisord-like)
 - Thread-per-service supervision with optional restart + backoff
 - Unix socket IPC (`start` / `stop` / `restart` / `enable` / `disable` / `list` / `logs`)
 - Optional OpenTelemetry metrics (on by default; disable with `--no-default-features`) → Grafana Alloy when `openTelemetry.enable` is true
