@@ -337,21 +337,11 @@ fn handle_ipc(
                     }
                 }
             } else {
-                write_frame(
-                    stream,
-                    &Response::Ok {
-                        message: None,
-                    },
-                )?;
+                write_frame(stream, &Response::Ok { message: None })?;
             }
         }
         Request::Shutdown { mode } => {
-            write_frame(
-                stream,
-                &Response::Ok {
-                    message: None,
-                },
-            )?;
+            write_frame(stream, &Response::Ok { message: None })?;
             signals::request_shutdown(mode);
         }
     }
@@ -378,12 +368,7 @@ fn respond_start(stream: &mut UnixStream, res: Result<String>) -> Result<()> {
 
 fn respond_result(stream: &mut UnixStream, res: Result<()>) -> Result<()> {
     match res {
-        Ok(()) => write_frame(
-            stream,
-            &Response::Ok {
-                message: None,
-            },
-        )?,
+        Ok(()) => write_frame(stream, &Response::Ok { message: None })?,
         Err(e) => write_frame(
             stream,
             &Response::Error {

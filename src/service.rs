@@ -9,8 +9,7 @@ use crate::error::{Error, Result};
 
 /// Default PATH for supervised processes. Kernel-started PID 1 often has no
 /// PATH; without `/sbin` tools like `ip` and `dhclient` are invisible.
-const DEFAULT_SERVICE_PATH: &str =
-    "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+const DEFAULT_SERVICE_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 
 fn build_shell_command(
     cmd: &str,

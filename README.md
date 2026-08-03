@@ -100,4 +100,8 @@ MIT
 
 ## Documentation
 
-- [Architecture](docs/architecture.md) — design overview, `init`/`supervise`, config, reload, OTel, distribution
+See **[docs/README.md](docs/README.md)** for the full index.
+
+- [Operator guide](docs/operator.md) — manage services, write config, dependencies, boot  
+- [Control socket API](docs/api.md) — Unix socket protocol for integrations  
+- [Architecture](docs/architecture.md) — design overview (`init` / `supervise`, reload, OTel)

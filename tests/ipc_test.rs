@@ -42,13 +42,7 @@ fn frame_roundtrip_unix_pair() {
             }
             other => panic!("unexpected {other:?}"),
         }
-        write_frame(
-            &mut b,
-            &Response::Ok {
-                message: None,
-            },
-        )
-        .unwrap();
+        write_frame(&mut b, &Response::Ok { message: None }).unwrap();
     });
     write_frame(
         &mut a,

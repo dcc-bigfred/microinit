@@ -61,9 +61,9 @@ impl Shared {
                 (_, Some(p)) => rt.pid = Some(p),
                 (
                     ServiceState::Running
-                        | ServiceState::Starting
-                        | ServiceState::Restarting
-                        | ServiceState::WaitingForDependency,
+                    | ServiceState::Starting
+                    | ServiceState::Restarting
+                    | ServiceState::WaitingForDependency,
                     None,
                 ) => {
                     // keep existing pid
@@ -77,8 +77,8 @@ impl Shared {
                     }
                 }
                 ServiceState::Starting
-                    | ServiceState::Restarting
-                    | ServiceState::WaitingForDependency => {}
+                | ServiceState::Restarting
+                | ServiceState::WaitingForDependency => {}
                 _ => rt.running_since = None,
             }
         }
@@ -123,10 +123,7 @@ impl Shared {
             let Some(rt) = map.get(dep) else {
                 return Err(Error::UnknownService(dep.clone()));
             };
-            if !matches!(
-                rt.state,
-                ServiceState::Running | ServiceState::Succeeded
-            ) {
+            if !matches!(rt.state, ServiceState::Running | ServiceState::Succeeded) {
                 out.push(dep.clone());
             }
         }
@@ -290,10 +287,7 @@ impl Supervisor {
                 unmet.join(", ")
             )
         } else {
-            format!(
-                "{name}: waiting for dependencies ({})",
-                unmet.join(", ")
-            )
+            format!("{name}: waiting for dependencies ({})", unmet.join(", "))
         };
         self.hub.emit(
             INIT_SERVICE,
