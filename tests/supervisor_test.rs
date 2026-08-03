@@ -367,15 +367,15 @@ fn liveness_probe_restarts_oneshot_on_failure() {
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     while std::time::Instant::now() < deadline {
         let st = sup.status("net").unwrap();
-        if marker.exists()
-            && st.restarts >= 1
-            && matches!(st.state, ServiceState::Succeeded)
-        {
+        if marker.exists() && st.restarts >= 1 && matches!(st.state, ServiceState::Succeeded) {
             break;
         }
         thread::sleep(Duration::from_millis(100));
     }
-    assert!(marker.exists(), "start should recreate marker after probe fail");
+    assert!(
+        marker.exists(),
+        "start should recreate marker after probe fail"
+    );
     assert!(
         sup.status("net").unwrap().restarts >= 1,
         "expected at least one liveness restart"

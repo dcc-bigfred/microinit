@@ -334,7 +334,10 @@ fn parses_liveness_probe_with_defaults() {
     let cfg: Config = serde_json::from_str(raw).unwrap();
     cfg.validate().unwrap();
     let probe = cfg.get("net").unwrap().liveness_probe.as_ref().unwrap();
-    assert_eq!(probe.cmd.as_deref(), Some("/usr/sbin/configure-ethernet check"));
+    assert_eq!(
+        probe.cmd.as_deref(),
+        Some("/usr/sbin/configure-ethernet check")
+    );
     assert_eq!(probe.success_exit_codes, vec![0]);
     assert_eq!(probe.interval, 60);
     assert_eq!(probe.timeout, 5);

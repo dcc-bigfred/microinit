@@ -20,10 +20,10 @@ use crate::constants::{
 };
 use crate::error::{Error, Result};
 use crate::graph::{partition_boot, shutdown_order};
+use crate::liveness::{run_probe, ProbeResult};
 use crate::logs::{capture_stream, LogHub, INIT_SERVICE};
 use crate::protocol::{LogLevel, ServiceState, ServiceStatus};
 use crate::reaper::{ensure_reaper_thread, global_exits, ExitRegistry};
-use crate::liveness::{run_probe, ProbeResult};
 use crate::service::{run_shell, spawn_shell, terminate_pid};
 use crate::syncutil::mutex_lock;
 
@@ -739,10 +739,7 @@ impl Supervisor {
         self.hub.emit(
             INIT_SERVICE,
             LogLevel::Warn,
-            format!(
-                "{}: livenessProbe failed ({reason}), restarting",
-                cfg.name
-            ),
+            format!("{}: livenessProbe failed ({reason}), restarting", cfg.name),
         );
         self.shared
             .set_state(&cfg.name, ServiceState::Restarting, None);
@@ -754,8 +751,7 @@ impl Supervisor {
                 LogLevel::Error,
                 format!("{}: liveness restart: {e}", cfg.name),
             );
-            self.shared
-                .set_state(&cfg.name, ServiceState::Failed, None);
+            self.shared.set_state(&cfg.name, ServiceState::Failed, None);
         }
         *next_liveness = Self::schedule_liveness(cfg);
     }

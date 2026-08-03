@@ -90,12 +90,7 @@ fn run_tcp_probe(addr: &str, timeout: Duration) -> ProbeResult {
     ProbeResult::Fail(format!("tcp {addr}: {last_err}"))
 }
 
-fn run_http_probe(
-    url: &str,
-    method: &str,
-    accepted: &[u16],
-    timeout: Duration,
-) -> ProbeResult {
+fn run_http_probe(url: &str, method: &str, accepted: &[u16], timeout: Duration) -> ProbeResult {
     let method = method.trim();
     if method.is_empty() {
         return ProbeResult::Fail("httpMethod empty".into());
