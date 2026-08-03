@@ -114,7 +114,7 @@ fn run_http_probe(url: &str, method: &str, accepted: &[u16], timeout: Duration) 
         }
         Err(ureq::Error::Status(code, resp)) => {
             let _ = resp.into_string();
-            if accepted.contains(&(code as u16)) {
+            if accepted.contains(&code) {
                 ProbeResult::Ok
             } else {
                 ProbeResult::Fail(format!("HTTP {code}"))
