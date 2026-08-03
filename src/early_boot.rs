@@ -38,11 +38,11 @@ pub fn resolve_script(paths: &Paths) -> ScriptSource {
 }
 
 /// Run early-boot (on-disk override/base, or embedded default).
+///
+/// Does **not** create `$DATA_DIR/etc` beforehand: that path may sit on an
+/// unmounted mountpoint; the script itself mounts `/data` and seeds configs.
+/// Callers must load `microinit.json` **after** this returns successfully.
 pub fn run(paths: &Paths, logs_tty: &str, init_logs_tty: &str, console: &str) -> Result<()> {
-    if let Some(parent) = paths.config.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
     match resolve_script(paths) {
         ScriptSource::Path(script) => run_script(&script, logs_tty, init_logs_tty, console),
         ScriptSource::Embedded => {

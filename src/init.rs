@@ -81,25 +81,28 @@ pub fn run(opts: InitOpts) -> Result<()> {
             &opts.init_logs_tty,
             &opts.console,
         ) {
-            Ok(()) => {}
+            Ok(()) => {
+                boot_note(
+                    init_logs_preview,
+                    "early-boot finished; loading configuration from disk",
+                );
+            }
             Err(e) => {
                 boot_note(init_logs_preview, &format!("early-boot failed: {e}"));
                 if opts.require_early_boot {
                     return Err(e);
                 }
+                boot_note(
+                    init_logs_preview,
+                    "continuing without early-boot; loading configuration from disk",
+                );
             }
         }
     }
 
-    let mut cfg = config::load_or_create_with_dropins(
-        &opts.paths.config,
-        &opts.paths.example,
-        &opts.paths.override_file,
-        &opts.paths.dropins_dir,
-    )?;
-
-    // CLI / InitOpts socket always wins over JSON.
-    cfg.socket = opts.socket.clone();
+    // Always (re)load JSON after early-boot: the script mounts `$DATA_DIR` and
+    // may seed/update `microinit.json`, drop-ins, and the enabled-override.
+    let mut cfg = load_config_after_early_boot(&opts)?;
 
     let logs_tty = if opts.logs_tty != DEFAULT_LOGS_TTY {
         opts.logs_tty.clone()
@@ -256,6 +259,19 @@ pub fn run(opts: InitOpts) -> Result<()> {
 
         thread::sleep(INIT_LOOP_SLEEP);
     }
+}
+
+/// Load config from disk after early-boot has had a chance to mount `$DATA_DIR`
+/// and seed JSON. CLI socket always overrides the file.
+fn load_config_after_early_boot(opts: &InitOpts) -> Result<crate::config::Config> {
+    let mut cfg = config::load_or_create_with_dropins(
+        &opts.paths.config,
+        &opts.paths.example,
+        &opts.paths.override_file,
+        &opts.paths.dropins_dir,
+    )?;
+    cfg.socket = opts.socket.clone();
+    Ok(cfg)
 }
 
 fn handle_ipc(
