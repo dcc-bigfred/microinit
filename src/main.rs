@@ -2,6 +2,8 @@
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::thread;
+use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 use microinit::cli;
@@ -101,8 +103,65 @@ fn paths_for_config(config_path: &Path) -> config::Paths {
     paths
 }
 
+fn default_init_opts(socket: String) -> init::InitOpts {
+    init::InitOpts {
+        logs_tty: DEFAULT_LOGS_TTY.to_string(),
+        init_logs_tty: DEFAULT_INIT_LOGS_TTY.to_string(),
+        console: DEFAULT_CONSOLE.to_string(),
+        paths: paths_for_config(&default_config_path()),
+        skip_early_boot: false,
+        require_early_boot: true,
+        log_to_files: false,
+        spawn_getty: true,
+        attach_ttys: true,
+        socket,
+    }
+}
+
+/// PID 1 must never exit: the kernel panics ("Attempted to kill init!").
+/// Bypass clap entirely — leftover kernel cmdline args become argv and would
+/// make `Cli::parse()` call `exit(2)` before our auto-init fallback.
+fn run_as_pid1() -> ! {
+    eprintln!("microinit: running as PID 1 (init)");
+    let opts = default_init_opts(DEFAULT_SOCKET.to_string());
+    if let Err(e) = init::run(opts) {
+        eprintln!("microinit: fatal: {e}");
+    }
+    // Stay alive so the system remains debuggable on the console.
+    loop {
+        eprintln!("microinit: PID 1 idle after fatal error; not exiting");
+        thread::sleep(Duration::from_secs(3600));
+    }
+}
+
 fn main() -> ExitCode {
-    let cli = Cli::parse();
+    // Kernel may exec /sbin/init with unrecognized cmdline tokens as argv.
+    // Never go through clap when we are already PID 1.
+    if std::process::id() == 1 {
+        run_as_pid1();
+    }
+
+    let cli = match Cli::try_parse() {
+        Ok(c) => c,
+        Err(e) => {
+            // argv0 `init` without a subcommand (or with junk args): still boot.
+            if init::should_auto_init() {
+                eprintln!("microinit: CLI parse failed ({e}); falling back to init mode");
+                let opts = default_init_opts(DEFAULT_SOCKET.to_string());
+                return match init::run(opts) {
+                    Ok(()) => ExitCode::SUCCESS,
+                    Err(err) => {
+                        eprintln!("microinit: {err}");
+                        ExitCode::FAILURE
+                    }
+                };
+            }
+            // Normal CLI usage error (prints help / message).
+            let _ = e.print();
+            return ExitCode::from(2);
+        }
+    };
+
     let socket = cli.socket.display().to_string();
 
     let command = match cli.command {
