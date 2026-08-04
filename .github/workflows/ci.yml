@@ -235,7 +235,7 @@ jobs:
       - name: Verify Bionic linkage
         run: |
           set -euo pipefail
-          for f in dist/microinit-android-* dist/shutdown-android-*; do
+          for f in dist/libmicroinit.so dist/libshutdown.so dist/microinit-android-* dist/shutdown-android-*; do
             [ -f "$f" ] || continue
             file "$f"
             if ! file "$f" | grep -qi 'android\|linker64\|linker'; then
@@ -288,7 +288,13 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish microinit-android-arm64
-        run: ./scripts/publish-oci-microinit-android.sh dist/microinit-android-arm64 dist/shutdown-android-arm64
+        run: |
+          set -euo pipefail
+          microinit=dist/libmicroinit.so
+          shutdown=dist/libshutdown.so
+          [[ -f "${microinit}" ]] || microinit=dist/microinit-android-arm64
+          [[ -f "${shutdown}" ]] || shutdown=dist/shutdown-android-arm64
+          ./scripts/publish-oci-microinit-android.sh "${microinit}" "${shutdown}"
 
       - name: Job summary
         run: |

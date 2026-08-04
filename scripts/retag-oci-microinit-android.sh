@@ -33,20 +33,29 @@ find_layer() {
   return 1
 }
 
-BIN_NAME="$(find_layer microinit-android-arm64)" || true
+BIN_NAME="$(find_layer libmicroinit.so || find_layer microinit-android-arm64)" || true
 if [[ -z "${BIN_NAME}" ]]; then
-  echo "error: expected microinit-android-arm64 in OCI artifact, found:" >&2
+  echo "error: expected libmicroinit.so (or legacy microinit-android-arm64) in OCI artifact, found:" >&2
   find "${tmpdir}" -type f >&2
   exit 1
 fi
+# Normalize legacy layers to the jniLibs-compatible OCI layer names.
+if [[ "${BIN_NAME}" != "libmicroinit.so" ]]; then
+  cp -f "${tmpdir}/${BIN_NAME}" "${tmpdir}/libmicroinit.so"
+  chmod 755 "${tmpdir}/libmicroinit.so"
+fi
 
 push_args=(
-  "${BIN_NAME}:${BIN_MEDIA_TYPE}"
+  "libmicroinit.so:${BIN_MEDIA_TYPE}"
 )
 
-SHUTDOWN_NAME="$(find_layer shutdown-android-arm64)" || true
+SHUTDOWN_NAME="$(find_layer libshutdown.so || find_layer shutdown-android-arm64)" || true
 if [[ -n "${SHUTDOWN_NAME}" ]]; then
-  push_args+=("${SHUTDOWN_NAME}:${SHUTDOWN_MEDIA_TYPE}")
+  if [[ "${SHUTDOWN_NAME}" != "libshutdown.so" ]]; then
+    cp -f "${tmpdir}/${SHUTDOWN_NAME}" "${tmpdir}/libshutdown.so"
+    chmod 755 "${tmpdir}/libshutdown.so"
+  fi
+  push_args+=("libshutdown.so:${SHUTDOWN_MEDIA_TYPE}")
 fi
 
 annotate=(
@@ -57,9 +66,9 @@ annotate=(
 )
 
 echo "Publishing ${IMAGE}:${RELEASE_TAG} and :latest-release"
-echo "  microinit: $(wc -c < "${tmpdir}/${BIN_NAME}") bytes"
+echo "  libmicroinit.so: $(wc -c < "${tmpdir}/libmicroinit.so") bytes"
 if [[ -n "${SHUTDOWN_NAME}" ]]; then
-  echo "  shutdown:  $(wc -c < "${tmpdir}/${SHUTDOWN_NAME}") bytes"
+  echo "  libshutdown.so:  $(wc -c < "${tmpdir}/libshutdown.so") bytes"
 fi
 (
   cd "${tmpdir}"

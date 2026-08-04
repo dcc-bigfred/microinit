@@ -124,8 +124,22 @@ build_one() {
   cp -f "target/${rust_target}/release/microinit" "dist/${dist_micro}"
   cp -f "target/${rust_target}/release/shutdown" "dist/${dist_shut}"
   chmod 755 "dist/${dist_micro}" "dist/${dist_shut}"
+
+  # Android jniLibs require native libraries to use the lib*.so convention.
+  # Keep arch-specific release artifacts for GitHub Release compatibility.
+  if [[ "${rust_target}" == "aarch64-linux-android" ]]; then
+    cp -f "dist/${dist_micro}" dist/libmicroinit.so
+    cp -f "dist/${dist_shut}" dist/libshutdown.so
+    chmod 755 dist/libmicroinit.so dist/libshutdown.so
+  fi
+
   file "dist/${dist_micro}" "dist/${dist_shut}" || true
-  echo "wrote dist/${dist_micro} dist/${dist_shut}"
+  if [[ "${rust_target}" == "aarch64-linux-android" ]]; then
+    file dist/libmicroinit.so dist/libshutdown.so || true
+    echo "wrote dist/${dist_micro} dist/${dist_shut} dist/libmicroinit.so dist/libshutdown.so"
+  else
+    echo "wrote dist/${dist_micro} dist/${dist_shut}"
+  fi
 }
 
 for a in "${ARCHES[@]}"; do
