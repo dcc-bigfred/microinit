@@ -180,6 +180,10 @@ fn unknown_service_errors() {
     sup.boot().unwrap();
     assert!(matches!(sup.status("nope"), Err(Error::UnknownService(_))));
     assert!(matches!(
+        sup.describe("nope"),
+        Err(Error::UnknownService(_))
+    ));
+    assert!(matches!(
         sup.start_service("nope", false),
         Err(Error::UnknownService(_))
     ));
@@ -385,6 +389,91 @@ fn liveness_probe_restarts_oneshot_on_failure() {
         "expected at least one liveness failure counter bump"
     );
     assert_eq!(sup.status("net").unwrap().state, ServiceState::Succeeded);
+
+    let desc = sup.describe("net").unwrap();
+    assert!(
+        desc.events
+            .iter()
+            .any(|e| e.kind == microinit::protocol::ServiceEventKind::LivenessFailed),
+        "expected liveness_failed event, got {:?}",
+        desc.events
+    );
+    assert!(
+        desc.events
+            .iter()
+            .any(|e| e.kind == microinit::protocol::ServiceEventKind::Restart),
+        "expected restart event, got {:?}",
+        desc.events
+    );
+    assert!(
+        desc.events.iter().any(|e| {
+            e.kind == microinit::protocol::ServiceEventKind::LivenessFailed && e.detail.is_some()
+        }),
+        "liveness_failed should carry detail"
+    );
+
     let _ = std::fs::remove_file(&marker);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn describe_deps_and_reverse_deps() {
+    let (sup, dir) = make_sup(vec![
+        job("a", "true", &[], true),
+        job("b", "true", &["a"], true),
+        job("c", "true", &["b"], true),
+    ]);
+    sup.boot().unwrap();
+
+    let mid = sup.describe("b").unwrap();
+    assert_eq!(mid.depends_on.len(), 1);
+    assert_eq!(mid.depends_on[0].name, "a");
+    assert_eq!(mid.dependents.len(), 1);
+    assert_eq!(mid.dependents[0].name, "c");
+
+    let names: Vec<_> = mid.dep_nodes.iter().map(|n| n.name.as_str()).collect();
+    assert!(names.contains(&"a"));
+    assert!(names.contains(&"b"));
+    assert!(names.contains(&"c"));
+    assert!(mid.dep_edges.contains(&("a".into(), "b".into())));
+    assert!(mid.dep_edges.contains(&("b".into(), "c".into())));
+
+    let leaf = sup.describe("c").unwrap();
+    assert_eq!(leaf.depends_on[0].name, "b");
+    assert!(leaf.dependents.is_empty());
+    assert!(leaf.dep_edges.contains(&("a".into(), "b".into())));
+    assert!(leaf.dep_edges.contains(&("b".into(), "c".into())));
+
+    // Lifecycle events recorded during boot.
+    assert!(
+        mid.events.iter().any(|e| {
+            e.kind == microinit::protocol::ServiceEventKind::StateChange
+                && e.to == Some(ServiceState::Succeeded)
+        }),
+        "expected state_change to succeeded, got {:?}",
+        mid.events
+    );
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn describe_enable_disable_records_state_change() {
+    let (sup, dir) = make_sup(vec![job("svc", "true", &[], true)]);
+    sup.boot().unwrap();
+    sup.set_enabled("svc", false).unwrap();
+    thread::sleep(Duration::from_millis(200));
+
+    let desc = sup.describe("svc").unwrap();
+    assert!(
+        desc.events.iter().any(|e| {
+            e.kind == microinit::protocol::ServiceEventKind::StateChange
+                && e.to == Some(ServiceState::Disabled)
+        }),
+        "expected disable state_change, got {:?}",
+        desc.events
+    );
+    assert!(desc.events.len() <= microinit::constants::EVENT_RETURN);
+
     let _ = std::fs::remove_dir_all(dir);
 }

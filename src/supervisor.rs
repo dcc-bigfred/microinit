@@ -3,26 +3,29 @@
 //! Child process waits are owned by the central PID 1 reaper ([`ExitRegistry`]),
 //! not by `std::process::Child::wait`, to avoid racing `waitpid(-1)`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use chrono::Utc;
 use nix::unistd::Pid;
 
 use crate::config::{Config, ServiceConfig};
 use crate::console::Console;
 use crate::constants::{
-    BOOT_BG_SETTLE, BOOT_FG_SETTLE, CTL_POLL, DAEMONIZE_GRACE, DEP_WAIT, SHUTDOWN_QUIT_WAIT,
-    SHUTDOWN_STOP_WAIT, STOP_GRACE_SECS,
+    BOOT_BG_SETTLE, BOOT_FG_SETTLE, CTL_POLL, DAEMONIZE_GRACE, DEP_WAIT, EVENT_RETURN,
+    EVENT_RING_CAP, SHUTDOWN_QUIT_WAIT, SHUTDOWN_STOP_WAIT, STOP_GRACE_SECS,
 };
 use crate::error::{Error, Result};
 use crate::graph::{partition_boot, shutdown_order};
 use crate::liveness::{run_probe, ProbeResult};
 use crate::logs::{capture_stream, LogHub, INIT_SERVICE};
-use crate::protocol::{LogLevel, ServiceState, ServiceStatus};
+use crate::protocol::{
+    DepNode, LogLevel, ServiceDescribe, ServiceEvent, ServiceEventKind, ServiceState, ServiceStatus,
+};
 use crate::reaper::{ensure_reaper_thread, global_exits, ExitRegistry};
 use crate::service::{run_shell, spawn_shell, terminate_pid};
 use crate::syncutil::mutex_lock;
@@ -35,6 +38,46 @@ struct Runtime {
     liveness_failures: u32,
     enabled: bool,
     running_since: Option<Instant>,
+    events: VecDeque<ServiceEvent>,
+}
+
+fn new_runtime(enabled: bool) -> Runtime {
+    Runtime {
+        state: if enabled {
+            ServiceState::Pending
+        } else {
+            ServiceState::Disabled
+        },
+        pid: None,
+        restarts: 0,
+        liveness_failures: 0,
+        enabled,
+        running_since: None,
+        events: VecDeque::with_capacity(EVENT_RING_CAP.min(16)),
+    }
+}
+
+fn event_ts() -> String {
+    Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+}
+
+fn push_event_into(
+    rt: &mut Runtime,
+    kind: ServiceEventKind,
+    from: Option<ServiceState>,
+    to: Option<ServiceState>,
+    detail: Option<String>,
+) {
+    while rt.events.len() >= EVENT_RING_CAP {
+        rt.events.pop_front();
+    }
+    rt.events.push_back(ServiceEvent {
+        ts: event_ts(),
+        kind,
+        from,
+        to,
+        detail,
+    });
 }
 
 /// Snapshot of a service for metrics exporters.
@@ -59,6 +102,16 @@ impl Shared {
     fn set_state(&self, name: &str, state: ServiceState, pid: Option<i32>) {
         let mut map = mutex_lock(&self.runtimes);
         if let Some(rt) = map.get_mut(name) {
+            let old = rt.state;
+            if old != state {
+                push_event_into(
+                    rt,
+                    ServiceEventKind::StateChange,
+                    Some(old),
+                    Some(state),
+                    None,
+                );
+            }
             rt.state = state;
             match (state, pid) {
                 (_, Some(p)) => rt.pid = Some(p),
@@ -91,22 +144,42 @@ impl Shared {
     fn bump_restarts(&self, name: &str) {
         if let Some(rt) = mutex_lock(&self.runtimes).get_mut(name) {
             rt.restarts = rt.restarts.saturating_add(1);
+            push_event_into(rt, ServiceEventKind::Restart, None, None, None);
         }
     }
 
-    fn bump_liveness_failures(&self, name: &str) {
+    fn bump_liveness_failures(&self, name: &str, detail: Option<String>) {
         if let Some(rt) = mutex_lock(&self.runtimes).get_mut(name) {
             rt.liveness_failures = rt.liveness_failures.saturating_add(1);
+            push_event_into(rt, ServiceEventKind::LivenessFailed, None, None, detail);
         }
     }
 
     fn set_enabled(&self, name: &str, enabled: bool) {
         if let Some(rt) = mutex_lock(&self.runtimes).get_mut(name) {
             rt.enabled = enabled;
+            let old = rt.state;
             if !enabled {
+                if old != ServiceState::Disabled {
+                    push_event_into(
+                        rt,
+                        ServiceEventKind::StateChange,
+                        Some(old),
+                        Some(ServiceState::Disabled),
+                        None,
+                    );
+                }
                 rt.state = ServiceState::Disabled;
                 rt.pid = None;
+                rt.running_since = None;
             } else if matches!(rt.state, ServiceState::Disabled) {
+                push_event_into(
+                    rt,
+                    ServiceEventKind::StateChange,
+                    Some(ServiceState::Disabled),
+                    Some(ServiceState::Pending),
+                    None,
+                );
                 rt.state = ServiceState::Pending;
             }
         }
@@ -209,21 +282,7 @@ impl Supervisor {
     ) -> Arc<Self> {
         let mut runtimes = HashMap::new();
         for svc in &config.services {
-            runtimes.insert(
-                svc.name.clone(),
-                Runtime {
-                    state: if svc.enabled {
-                        ServiceState::Pending
-                    } else {
-                        ServiceState::Disabled
-                    },
-                    pid: None,
-                    restarts: 0,
-                    liveness_failures: 0,
-                    enabled: svc.enabled,
-                    running_since: None,
-                },
-            );
+            runtimes.insert(svc.name.clone(), new_runtime(svc.enabled));
         }
         Arc::new(Self {
             config: Mutex::new(config),
@@ -271,6 +330,123 @@ impl Supervisor {
             restarts: rt.restarts,
             liveness_failures: rt.liveness_failures,
             enabled: rt.enabled,
+        })
+    }
+
+    /// Rich status: direct deps, reverse deps, transitive subgraph, recent events.
+    pub fn describe(&self, name: &str) -> Result<ServiceDescribe> {
+        let map = mutex_lock(&self.shared.runtimes);
+        let cfg = mutex_lock(&self.config);
+        let rt = map
+            .get(name)
+            .ok_or_else(|| Error::UnknownService(name.to_string()))?;
+
+        let status = ServiceStatus {
+            name: name.to_string(),
+            state: rt.state,
+            pid: rt.pid,
+            restarts: rt.restarts,
+            liveness_failures: rt.liveness_failures,
+            enabled: rt.enabled,
+        };
+        let uptime_secs = rt
+            .running_since
+            .map(|since| Instant::now().duration_since(since).as_secs());
+
+        let svc = cfg
+            .services
+            .iter()
+            .find(|s| s.name == name)
+            .ok_or_else(|| Error::UnknownService(name.to_string()))?;
+
+        let state_of = |n: &str| -> ServiceState {
+            map.get(n).map(|r| r.state).unwrap_or(ServiceState::Pending)
+        };
+
+        let depends_on: Vec<DepNode> = svc
+            .depends_on
+            .iter()
+            .map(|d| DepNode {
+                name: d.clone(),
+                state: state_of(d),
+            })
+            .collect();
+
+        let dependents: Vec<DepNode> = cfg
+            .services
+            .iter()
+            .filter(|s| s.depends_on.iter().any(|d| d == name))
+            .map(|s| DepNode {
+                name: s.name.clone(),
+                state: state_of(&s.name),
+            })
+            .collect();
+
+        // Forward edges: dep -> service (service depends on dep)
+        let mut forward: HashMap<&str, Vec<&str>> = HashMap::new();
+        // Reverse edges: service -> deps
+        let mut reverse: HashMap<&str, Vec<&str>> = HashMap::new();
+        for s in &cfg.services {
+            for dep in &s.depends_on {
+                forward
+                    .entry(dep.as_str())
+                    .or_default()
+                    .push(s.name.as_str());
+                reverse
+                    .entry(s.name.as_str())
+                    .or_default()
+                    .push(dep.as_str());
+            }
+        }
+
+        let mut visited: HashSet<String> = HashSet::new();
+        let mut edge_set: HashSet<(String, String)> = HashSet::new();
+        let mut queue: VecDeque<String> = VecDeque::new();
+        visited.insert(name.to_string());
+        queue.push_back(name.to_string());
+
+        while let Some(cur) = queue.pop_front() {
+            if let Some(deps) = reverse.get(cur.as_str()) {
+                for &dep in deps {
+                    edge_set.insert((dep.to_string(), cur.clone()));
+                    if visited.insert(dep.to_string()) {
+                        queue.push_back(dep.to_string());
+                    }
+                }
+            }
+            if let Some(children) = forward.get(cur.as_str()) {
+                for &child in children {
+                    edge_set.insert((cur.clone(), child.to_string()));
+                    if visited.insert(child.to_string()) {
+                        queue.push_back(child.to_string());
+                    }
+                }
+            }
+        }
+
+        let mut dep_nodes: Vec<DepNode> = visited
+            .iter()
+            .map(|n| DepNode {
+                name: n.clone(),
+                state: state_of(n),
+            })
+            .collect();
+        dep_nodes.sort_by(|a, b| a.name.cmp(&b.name));
+
+        let mut dep_edges: Vec<(String, String)> = edge_set.into_iter().collect();
+        dep_edges.sort();
+
+        let start = rt.events.len().saturating_sub(EVENT_RETURN);
+        let events: Vec<ServiceEvent> = rt.events.iter().skip(start).cloned().collect();
+
+        Ok(ServiceDescribe {
+            status,
+            uptime_secs,
+            depends_on,
+            dependents,
+            dep_nodes,
+            dep_edges,
+            events,
         })
     }
 
@@ -524,21 +700,8 @@ impl Supervisor {
                     LogLevel::Info,
                     format!("reload: adding service {}", svc.name),
                 );
-                mutex_lock(&self.shared.runtimes).insert(
-                    svc.name.clone(),
-                    Runtime {
-                        state: if svc.enabled {
-                            ServiceState::Pending
-                        } else {
-                            ServiceState::Disabled
-                        },
-                        pid: None,
-                        restarts: 0,
-                        liveness_failures: 0,
-                        enabled: svc.enabled,
-                        running_since: None,
-                    },
-                );
+                mutex_lock(&self.shared.runtimes)
+                    .insert(svc.name.clone(), new_runtime(svc.enabled));
                 self.spawn_monitor(&svc.name)?;
                 if svc.enabled {
                     let _ = self.send_ctl(&svc.name, CtlMsg::Start { force: false });
@@ -756,7 +919,7 @@ impl Supervisor {
         );
         self.shared
             .set_state(&cfg.name, ServiceState::Restarting, None);
-        self.shared.bump_liveness_failures(&cfg.name);
+        self.shared.bump_liveness_failures(&cfg.name, Some(reason));
         self.shared.bump_restarts(&cfg.name);
         self.stop_tracked(cfg, tracked);
         if let Err(e) = self.do_start(cfg, tracked, false) {

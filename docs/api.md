@@ -47,6 +47,16 @@ Unknown fields should be ignored by clients where possible; the server may add f
 
 **Response:** `status` or `error` if unknown.
 
+### `describe`
+
+Rich status for one service: counters, uptime, direct deps, reverse deps, transitive dependency subgraph, and the last 10 lifecycle events.
+
+```json
+{ "type": "describe", "name": "nginx" }
+```
+
+**Response:** `describe` or `error` if unknown.
+
 ### `start`
 
 ```json
@@ -187,6 +197,66 @@ Operators normally use the companion `shutdown` binary (`shutdown -r now`, …) 
   }
 }
 ```
+
+### `describe`
+
+```json
+{
+  "type": "describe",
+  "describe": {
+    "status": {
+      "name": "nginx",
+      "state": "running",
+      "pid": 1240,
+      "restarts": 2,
+      "liveness_failures": 1,
+      "enabled": true
+    },
+    "uptime_secs": 4320,
+    "depends_on": [
+      { "name": "php-fpm", "state": "running" }
+    ],
+    "dependents": [
+      { "name": "cache", "state": "stopped" }
+    ],
+    "dep_nodes": [
+      { "name": "cache", "state": "stopped" },
+      { "name": "nginx", "state": "running" },
+      { "name": "php-fpm", "state": "running" }
+    ],
+    "dep_edges": [
+      ["php-fpm", "nginx"],
+      ["nginx", "cache"]
+    ],
+    "events": [
+      {
+        "ts": "2026-08-04T18:40:01.123Z",
+        "kind": "state_change",
+        "from": "pending",
+        "to": "starting"
+      },
+      {
+        "ts": "2026-08-04T18:51:10.001Z",
+        "kind": "liveness_failed",
+        "detail": "HTTP 503"
+      },
+      {
+        "ts": "2026-08-04T18:51:10.002Z",
+        "kind": "restart"
+      }
+    ]
+  }
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `depends_on` | Direct `dependsOn` (who this service needs) |
+| `dependents` | Who lists this service in their `dependsOn` |
+| `dep_nodes` / `dep_edges` | Transitive subgraph; edge `[A, B]` means B depends on A |
+| `events` | Oldest → newest; kinds: `state_change`, `restart`, `liveness_failed` (ring, last 10) |
+
+`uptime_secs` is omitted (or null) when the service is not currently `running`.
 
 ### `log`
 

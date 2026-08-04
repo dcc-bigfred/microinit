@@ -1,11 +1,12 @@
 //! CLI handlers that talk to the running `microinit init` daemon via IPC.
 
+use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
 use std::path::Path;
 
 use crate::error::{Error, Result};
 use crate::ipc::{read_frame, request, write_frame};
-use crate::protocol::{Request, Response, ShutdownMode};
+use crate::protocol::{DepNode, Request, Response, ServiceDescribe, ServiceEvent, ShutdownMode};
 
 /// Result of parsing SysV-style `shutdown` argv (excluding `--socket`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -88,6 +89,188 @@ pub fn cmd_list(socket: &Path) -> Result<()> {
         }
         Response::Error { message } => Err(Error::Ipc(message)),
         other => Err(Error::Ipc(format!("unexpected response: {other:?}"))),
+    }
+}
+
+pub fn cmd_describe(socket: &Path, name: &str) -> Result<()> {
+    match request(socket, &Request::Describe { name: name.into() })? {
+        Response::Describe { describe } => {
+            print_describe(&describe);
+            Ok(())
+        }
+        Response::Error { message } => Err(Error::Ipc(message)),
+        other => Err(Error::Ipc(format!("unexpected response: {other:?}"))),
+    }
+}
+
+fn print_describe(d: &ServiceDescribe) {
+    let s = &d.status;
+    let pid = s.pid.map(|p| p.to_string()).unwrap_or_else(|| "-".into());
+    println!("Service: {}", s.name);
+    println!("State:   {}", s.state);
+    println!("PID:     {pid}");
+    println!("Enabled: {}", if s.enabled { "yes" } else { "no" });
+    println!("Restarts: {}", s.restarts);
+    println!("Liveness failures: {}", s.liveness_failures);
+    println!("Uptime:  {}", format_uptime(d.uptime_secs));
+    println!();
+
+    println!("Depends on:");
+    print_dep_list(&d.depends_on);
+    println!();
+
+    println!("Required by:");
+    print_dep_list(&d.dependents);
+    println!();
+
+    println!("Dependency graph:");
+    print_dep_graph(&d.dep_nodes, &d.dep_edges);
+    println!();
+
+    println!("Recent events (last {}):", d.events.len());
+    if d.events.is_empty() {
+        println!("  (none)");
+    } else {
+        for ev in &d.events {
+            println!("  {}", format_event(ev));
+        }
+    }
+}
+
+fn print_dep_list(nodes: &[DepNode]) {
+    if nodes.is_empty() {
+        println!("  (none)");
+        return;
+    }
+    for n in nodes {
+        println!("  {} ({})", n.name, n.state);
+    }
+}
+
+fn format_uptime(secs: Option<u64>) -> String {
+    let Some(mut s) = secs else {
+        return "-".into();
+    };
+    let days = s / 86_400;
+    s %= 86_400;
+    let hours = s / 3_600;
+    s %= 3_600;
+    let mins = s / 60;
+    s %= 60;
+    if days > 0 {
+        format!("{days}d {hours}h {mins}m")
+    } else if hours > 0 {
+        format!("{hours}h {mins}m")
+    } else if mins > 0 {
+        format!("{mins}m {s}s")
+    } else {
+        format!("{s}s")
+    }
+}
+
+fn format_event(ev: &ServiceEvent) -> String {
+    use crate::protocol::ServiceEventKind;
+    match ev.kind {
+        ServiceEventKind::StateChange => {
+            let from = ev.from.map(|s| s.to_string()).unwrap_or_else(|| "?".into());
+            let to = ev.to.map(|s| s.to_string()).unwrap_or_else(|| "?".into());
+            format!("{}  state_change  {from} -> {to}", ev.ts)
+        }
+        ServiceEventKind::Restart => format!("{}  restart", ev.ts),
+        ServiceEventKind::LivenessFailed => match &ev.detail {
+            Some(d) => format!("{}  liveness_failed  ({d})", ev.ts),
+            None => format!("{}  liveness_failed", ev.ts),
+        },
+    }
+}
+
+/// Nested tree from roots (`├─>` / `└─>`), with `[already shown]` for repeats.
+fn print_dep_graph(nodes: &[DepNode], edges: &[(String, String)]) {
+    if edges.is_empty() {
+        if nodes.len() <= 1 {
+            println!("  (none)");
+            return;
+        }
+        for n in nodes {
+            println!("  {} ({})", n.name, n.state);
+        }
+        return;
+    }
+
+    let states: HashMap<&str, &DepNode> = nodes.iter().map(|n| (n.name.as_str(), n)).collect();
+    let mut children: HashMap<&str, Vec<&str>> = HashMap::new();
+    let mut has_parent: HashSet<&str> = HashSet::new();
+    for (from, to) in edges {
+        children.entry(from.as_str()).or_default().push(to.as_str());
+        has_parent.insert(to.as_str());
+    }
+    for kids in children.values_mut() {
+        kids.sort_unstable();
+        kids.dedup();
+    }
+
+    let mut roots: Vec<&str> = nodes
+        .iter()
+        .map(|n| n.name.as_str())
+        .filter(|n| !has_parent.contains(n))
+        .collect();
+    roots.sort_unstable();
+    if roots.is_empty() {
+        // Cycle covering whole subgraph — pick lex-smallest as root.
+        roots = nodes.iter().map(|n| n.name.as_str()).collect();
+        roots.sort_unstable();
+        if let Some(first) = roots.first().copied() {
+            roots = vec![first];
+        }
+    }
+
+    let mut expanded = HashSet::new();
+    for root in roots {
+        print_tree_node(root, "", true, true, &children, &states, &mut expanded);
+    }
+}
+
+fn print_tree_node(
+    name: &str,
+    prefix: &str,
+    is_root: bool,
+    is_last: bool,
+    children: &HashMap<&str, Vec<&str>>,
+    states: &HashMap<&str, &DepNode>,
+    expanded: &mut HashSet<String>,
+) {
+    let state = states
+        .get(name)
+        .map(|n| n.state.to_string())
+        .unwrap_or_else(|| "?".into());
+    let already = expanded.contains(name);
+    let marker = if already { " [already shown]" } else { "" };
+
+    if is_root {
+        println!("  {name} ({state}){marker}");
+    } else {
+        let branch = if is_last { "└─>" } else { "├─>" };
+        println!("{prefix}{branch} {name} ({state}){marker}");
+    }
+
+    if already {
+        return;
+    }
+    expanded.insert(name.to_string());
+
+    let Some(kids) = children.get(name) else {
+        return;
+    };
+    let child_prefix = if is_root {
+        String::from("  ")
+    } else if is_last {
+        format!("{prefix}    ")
+    } else {
+        format!("{prefix}│   ")
+    };
+    for (i, kid) in kids.iter().enumerate() {
+        let last = i + 1 == kids.len();
+        print_tree_node(kid, &child_prefix, false, last, children, states, expanded);
     }
 }
 

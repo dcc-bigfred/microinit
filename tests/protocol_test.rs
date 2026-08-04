@@ -32,6 +32,9 @@ fn request_response_serde_roundtrip() {
         Request::Shutdown {
             mode: ShutdownMode::Poweroff,
         },
+        Request::Describe {
+            name: "nginx".into(),
+        },
     ];
     for req in cases {
         let json = serde_json::to_string(&req).unwrap();
@@ -53,6 +56,47 @@ fn request_response_serde_roundtrip() {
     let json = serde_json::to_string(&resp).unwrap();
     assert!(json.contains("\"type\":\"status\""));
     assert!(json.contains("\"state\":\"failed\""));
+    let _: Response = serde_json::from_str(&json).unwrap();
+
+    let describe = Response::Describe {
+        describe: ServiceDescribe {
+            status: ServiceStatus {
+                name: "nginx".into(),
+                state: ServiceState::Running,
+                pid: Some(1),
+                restarts: 0,
+                liveness_failures: 0,
+                enabled: true,
+            },
+            uptime_secs: Some(10),
+            depends_on: vec![DepNode {
+                name: "php-fpm".into(),
+                state: ServiceState::Running,
+            }],
+            dependents: vec![],
+            dep_nodes: vec![
+                DepNode {
+                    name: "nginx".into(),
+                    state: ServiceState::Running,
+                },
+                DepNode {
+                    name: "php-fpm".into(),
+                    state: ServiceState::Running,
+                },
+            ],
+            dep_edges: vec![("php-fpm".into(), "nginx".into())],
+            events: vec![ServiceEvent {
+                ts: "2026-08-04T18:40:01.123Z".into(),
+                kind: ServiceEventKind::StateChange,
+                from: Some(ServiceState::Pending),
+                to: Some(ServiceState::Starting),
+                detail: None,
+            }],
+        },
+    };
+    let json = serde_json::to_string(&describe).unwrap();
+    assert!(json.contains("\"type\":\"describe\""));
+    assert!(json.contains("\"kind\":\"state_change\""));
     let _: Response = serde_json::from_str(&json).unwrap();
 }
 

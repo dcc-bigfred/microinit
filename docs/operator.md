@@ -24,6 +24,7 @@ The control socket defaults to `/run/microinit.sock`. Override with `--socket` i
 
 ```bash
 microinit list                          # name, state, pid, restarts, enabled, live_fail
+microinit describe redis                # deps, reverse deps, graph, recent events
 microinit start redis
 microinit start --force alloy           # start even if dependsOn are not ready
 microinit stop redis
@@ -35,7 +36,7 @@ microinit logs redis --follow
 microinit logs redis --lines 100
 ```
 
-`list` is the quickest way to see what is going on after boot.
+`list` is the quickest way to see what is going on after boot. For one service — who it depends on, who depends on it, and recent restarts / liveness failures — use `describe`.
 
 ### Useful states
 
