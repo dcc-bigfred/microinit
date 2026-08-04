@@ -1,0 +1,80 @@
+.Dd August 3, 2026
+.Dt UNMOUNT.SH 8
+.Os
+.Sh NAME
+.Nm unmount.sh
+.Nd late filesystem unmount for microinit shutdown
+.Sh SYNOPSIS
+.Nm
+.Sh DESCRIPTION
+Shell script executed by
+.Xr microinit 8
+at the end of ordered shutdown, after all supervised services have stopped and
+before
+.Xr reboot 2
+/
+.Xr poweroff .
+Not hardcoded in Rust so unmount policy can change without recompilation.
+.Pp
+Search order:
+.Bl -enum
+.It
+.Pa /data/etc/microinit/unmount.sh
+.Pq if present ; under
+.Ev DATA_DIR
+when set
+.It
+.Pa /etc/microinit/unmount.sh
+.It
+Portable script embedded in the
+.Nm microinit
+binary
+.Pq Pa scripts/unmount.sh
+.El
+.Ss Responsibilities
+The portable embedded script:
+.Bl -enum
+.It
+.Ic sync
+.It
+Attempt
+.Ic umount -a -r
+excluding essential pseudo-filesystems
+.Pq proc, sysfs, devtmpfs, devpts, tmpfs
+.It
+.Ic sync
+again
+.El
+.Pp
+Product images may install
+.Pa /etc/microinit/unmount.sh
+with a distro-specific script
+.Pq for example BigFred OS unbinds Pa /etc/shadow and umounts Pa /data
+or an override under the data root; otherwise the embedded portable script runs.
+.Ss Environment
+.Bl -tag -width MICROINIT_INIT_LOGS_TTY
+.It Ev DATA_DIR
+Persistent data root
+.Pq absolute path ; default Pa /data
+.It Ev MICROINIT_LOGS_TTY
+Service logs TTY path from
+.Nm microinit Cm init
+.Pq default Pa /dev/tty2
+.It Ev MICROINIT_INIT_LOGS_TTY
+microinit operational logs TTY
+.Pq default Pa /dev/tty3
+.It Ev MICROINIT_CONSOLE
+Console TTY path
+.Pq default Pa /dev/tty1
+.El
+.Sh EXIT STATUS
+.Ex -std
+Non-zero is logged by
+.Nm microinit
+but does
+.Em not
+block reboot or power-off.
+.Sh SEE ALSO
+.Xr microinit 8 ,
+.Xr early-boot.sh 8 ,
+.Xr umount 8

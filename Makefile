@@ -9,7 +9,7 @@ export RUSTUP_TOOLCHAIN
 PREFIX ?= /usr
 MANDIR ?= $(PREFIX)/share/man
 
-.PHONY: all build release release-musl check test test-release-assertions clean man install-man fmt clippy
+.PHONY: all build release release-musl release-android check test test-release-assertions clean man install-man fmt clippy
 
 all: build
 
@@ -24,8 +24,19 @@ release-musl:
 		$(CARGO) build --release --target $(TARGET_MUSL)
 	@mkdir -p dist
 	cp -f target/$(TARGET_MUSL)/release/microinit dist/microinit-linux-arm64
+	cp -f target/$(TARGET_MUSL)/release/shutdown dist/shutdown-linux-arm64
 	cp -f scripts/early-boot.sh dist/early-boot.sh
-	@echo "wrote dist/microinit-linux-arm64"
+	cp -f scripts/unmount.sh dist/unmount.sh
+	@echo "wrote dist/microinit-linux-arm64 dist/shutdown-linux-arm64"
+
+# Requires ANDROID_NDK_HOME. Default: arm64. Override: make release-android ARCHES="arm64 x86_64"
+# Builds with --no-default-features (supervise-only). Set MICROINIT_ANDROID_OTEL=1 for OTel.
+ANDROID_API ?= 24
+ARCHES ?= arm64
+release-android:
+	@test -n "$${ANDROID_NDK_HOME:-$${ANDROID_NDK_ROOT:-}}" || { \
+		echo "error: set ANDROID_NDK_HOME to an Android NDK" >&2; exit 1; }
+	ANDROID_API=$(ANDROID_API) ./scripts/build-android.sh $(ARCHES)
 
 check:
 	$(CARGO) check

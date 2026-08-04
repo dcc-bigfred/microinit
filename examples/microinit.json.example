@@ -23,7 +23,7 @@
       "shutdownWaitSecs": 5,
       "background": false,
       "dependsOn": [],
-      "cmd": "/etc/init.d/S15-network",
+      "cmd": "/etc/init.d/network",
       "startCmd": null,
       "stopCmd": null,
       "restartCmd": null,
@@ -45,7 +45,7 @@
       "dependsOn": [
         "network"
       ],
-      "cmd": "/etc/init.d/S30-redis",
+      "cmd": "/etc/init.d/redis",
       "startCmd": null,
       "stopCmd": null,
       "restartCmd": null,

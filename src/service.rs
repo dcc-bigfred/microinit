@@ -8,8 +8,18 @@ use crate::config::ServiceConfig;
 use crate::constants::TERMINATE_POLL;
 use crate::error::{Error, Result};
 
+/// Shell used to run service `cmd` / probes / stop scripts.
+#[cfg(target_os = "android")]
+const SHELL: &str = "/system/bin/sh";
+#[cfg(not(target_os = "android"))]
+const SHELL: &str = "/bin/sh";
+
 /// Default PATH for supervised processes. Kernel-started PID 1 often has no
 /// PATH; without `/sbin` tools like `ip` and `dhclient` are invisible.
+#[cfg(target_os = "android")]
+const DEFAULT_SERVICE_PATH: &str =
+    "/system/bin:/system/xbin:/vendor/bin:/system/sbin:/data/local/tmp";
+#[cfg(not(target_os = "android"))]
 const DEFAULT_SERVICE_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 
 fn build_shell_command(
@@ -17,7 +27,7 @@ fn build_shell_command(
     cfg: &ServiceConfig,
     env_extra: &HashMap<String, String>,
 ) -> Command {
-    let mut c = Command::new("/bin/sh");
+    let mut c = Command::new(SHELL);
     c.arg("-c")
         .arg(cmd)
         .current_dir(&cfg.cwd)

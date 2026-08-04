@@ -100,7 +100,7 @@ In `supervise` mode TTYs are not attached — logs stay in an in-memory ring and
 
 ## Early-boot
 
-Before loading JSON, `init` mode may run an **early-boot** script: mount `/proc`, `/sys`, fstab volumes, prepare `/data`, and so on.
+Before loading JSON, `init` mode may run an **early-boot** script: mount `/proc`, `/sys`, run `fsck -y` on real block filesystems, apply fstab, prepare `/data`, and so on.
 
 Script search order:
 
@@ -111,6 +111,38 @@ Script search order:
 Mount policy therefore lives in a script / distro overlay, not hard-coded in Rust.
 
 **Configuration is always loaded (or re-loaded) from disk only after early-boot returns**, so seeding of `$DATA_DIR/etc/microinit.json` and drop-ins by the script is visible to the supervisor. microinit does not create the config file before the script runs (that would race with mounting `/data`).
+
+---
+
+## Late unmount (shutdown)
+
+At the end of ordered shutdown — after all supervised services have been stopped, and before `reboot(2)` / power-off / halt — `init` mode runs an **unmount** script (same search order as early-boot):
+
+1. `$DATA_DIR/etc/microinit/unmount.sh`  
+2. `/etc/microinit/unmount.sh`  
+3. script embedded in the binary  
+
+Failures are logged and **do not block** reboot (a stuck umount must not hang the board forever). Distro overlays typically reverse early-boot (unbind `/etc/shadow`, umount `/data`, `sync`).
+
+---
+
+## Android / supervise-only build
+
+Cargo feature `init` (default) gates PID-1-only code: early-boot, getty, TTY attach,
+late unmount, and `reboot(2)`. Android NDK builds use `--no-default-features`, so
+only `microinit supervise` (plus CLI/IPC) is available.
+
+Constraints for a normal Google Play app sandbox:
+
+- Ship the binary inside the app and run it from a **Foreground Service** (persistent
+  notification) — a hidden background daemon violates Play policy.
+- Bind the control socket under **app-private storage** (e.g. `getFilesDir()`), never
+  `/run/…`. Pass `--socket` / JSON `socket` accordingly. Same-UID clients only
+  (`SO_PEERCRED` + `0600`).
+- Service shell is `/system/bin/sh` with an Android `PATH`.
+- Ordered shutdown **stops services, syncs, and exits** — no `reboot(2)` and no
+  BusyBox `/sbin/*` fallback.
+- Cross-app IPC over AF_UNIX is blocked by SELinux; same-app only.
 
 ---
 
@@ -138,10 +170,13 @@ With `panic = abort` in release, metrics code must avoid panics — a failure in
 
 ## Binary and image distribution
 
-Two independent artifacts:
+Two independent Linux artifacts, plus an Android binary bundle:
 
-1. **ORAS** — static arm64 binary (+ early-boot) for the hub system image, e.g. `ghcr.io/dcc-bigfred/microinit-linux-arm64`.  
-2. **Distroless container image** (amd64 + arm64) — `ghcr.io/dcc-bigfred/microinit`, default `ENTRYPOINT /microinit` + `CMD supervise`.
+1. **ORAS (linux)** — static arm64 binaries (`microinit` + `shutdown`) plus early-boot and unmount scripts for the hub system image, e.g. `ghcr.io/dcc-bigfred/microinit-linux-arm64`.
+2. **ORAS (android)** — supervise-only Bionic binaries (`microinit` + `shutdown`, built
+   with `--no-default-features`), e.g. `ghcr.io/dcc-bigfred/microinit-android-arm64`.
+   GitHub Releases also ship `armv7` and `x86_64`.
+3. **Distroless container image** (amd64 + arm64) — `ghcr.io/dcc-bigfred/microinit`, default `ENTRYPOINT /microinit` + `CMD supervise`.
 
 Tag lifecycle: `main` / `sha-<7>` on push, `v*` / `latest-release` on release.
 

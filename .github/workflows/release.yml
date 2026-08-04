@@ -24,7 +24,7 @@ jobs:
         run: |
           set -euo pipefail
           SHA="${GITHUB_SHA}"
-          DEADLINE=$(( $(date +%s) + 900 ))
+          DEADLINE=$(( $(date +%s) + 1800 ))
           RUN_ID=""
 
           while [ "$(date +%s)" -lt "$DEADLINE" ]; do
@@ -53,10 +53,10 @@ jobs:
             sleep 15
           done
 
-          echo "Timed out after 15 minutes waiting for CI workflow on commit ${SHA}"
+          echo "Timed out after 30 minutes waiting for CI workflow on commit ${SHA}"
           exit 1
 
-      - name: Download CI binaries
+      - name: Download CI binaries (linux arm64)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -65,6 +65,21 @@ jobs:
           gh run download "${{ steps.ci.outputs.run_id }}" \
             --name binaries-arm64 \
             --dir release-assets
+
+      - name: Download CI binaries (android)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          for arch in arm64 armv7 x86_64; do
+            gh run download "${{ steps.ci.outputs.run_id }}" \
+              --name "binaries-android-${arch}" \
+              --dir "release-assets/android-${arch}"
+            # Flatten into release-assets/ (avoid nested dirs in the release).
+            find "release-assets/android-${arch}" -type f -exec cp -f {} release-assets/ \;
+            rm -rf "release-assets/android-${arch}"
+          done
 
       - name: Create release if missing
         env:
@@ -109,6 +124,9 @@ jobs:
       - name: Retag microinit ORAS artifact from main
         run: ./scripts/retag-oci-microinit.sh "${GITHUB_REF_NAME}"
 
+      - name: Retag microinit Android ORAS artifact from main
+        run: ./scripts/retag-oci-microinit-android.sh "${GITHUB_REF_NAME}"
+
       - name: Retag distroless container image from main
         run: ./scripts/retag-oci-microinit-image.sh "${GITHUB_REF_NAME}"
 
@@ -117,8 +135,9 @@ jobs:
           {
             echo "### Release ${GITHUB_REF_NAME}"
             echo ""
-            echo "- GitHub Release assets uploaded"
+            echo "- GitHub Release assets uploaded (linux + android)"
             echo "- ORAS: \`ghcr.io/dcc-bigfred/microinit-linux-arm64:${GITHUB_REF_NAME}\`"
+            echo "- ORAS: \`ghcr.io/dcc-bigfred/microinit-android-arm64:${GITHUB_REF_NAME}\`"
             echo "- Image: \`ghcr.io/dcc-bigfred/microinit:${GITHUB_REF_NAME}\`"
             echo "- Image: \`ghcr.io/dcc-bigfred/microinit:latest-release\`"
           } >> "$GITHUB_STEP_SUMMARY"

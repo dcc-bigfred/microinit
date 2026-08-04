@@ -162,6 +162,10 @@ overrides
 Early-boot script
 .It Pa /data/etc/microinit/early-boot.sh
 Optional early-boot override
+.It Pa /etc/microinit/unmount.sh
+Late-shutdown unmount script
+.It Pa /data/etc/microinit/unmount.sh
+Optional unmount override
 .It Pa /run/microinit.sock
 Control socket
 .El
@@ -185,4 +189,6 @@ that it is starting despite unmet dependencies.
 .Sh SEE ALSO
 .Xr microinit.json 5 ,
 .Xr microinit.services.enabled-override.json 5 ,
-.Xr early-boot.sh 8
+.Xr early-boot.sh 8 ,
+.Xr unmount.sh 8 ,
+.Xr shutdown 8

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Publish microinit linux/arm64 OCI artifact to GHCR (ORAS).
 # Intended for CI on push to main/master only.
-# Usage: publish-oci-microinit.sh <microinit-linux-arm64> [early-boot.sh]
+# Usage: publish-oci-microinit.sh <microinit-linux-arm64> [early-boot.sh] [unmount.sh] [shutdown-linux-arm64]
 #
 # Tags: main, sha-<7>
 #
@@ -9,11 +9,15 @@
 # we push from a staging dir with relative basenames.
 set -euo pipefail
 
-BIN="${1:?usage: $0 <microinit-linux-arm64> [early-boot.sh]}"
+BIN="${1:?usage: $0 <microinit-linux-arm64> [early-boot.sh] [unmount.sh] [shutdown-linux-arm64]}"
 EARLY_BOOT="${2:-}"
+UNMOUNT="${3:-}"
+SHUTDOWN="${4:-}"
 IMAGE="${MICROINIT_OCI_IMAGE:-ghcr.io/dcc-bigfred/microinit-linux-arm64}"
 BIN_MEDIA_TYPE="application/vnd.dcc-bigfred.microinit.linux.arm64.v1"
-SCRIPT_MEDIA_TYPE="application/vnd.dcc-bigfred.microinit.early-boot.sh.v1"
+EARLY_MEDIA_TYPE="application/vnd.dcc-bigfred.microinit.early-boot.sh.v1"
+UNMOUNT_MEDIA_TYPE="application/vnd.dcc-bigfred.microinit.unmount.sh.v1"
+SHUTDOWN_MEDIA_TYPE="application/vnd.dcc-bigfred.shutdown.linux.arm64.v1"
 
 if [[ ! -f "${BIN}" ]]; then
   echo "error: binary not found: ${BIN}" >&2
@@ -46,7 +50,27 @@ if [[ -n "${EARLY_BOOT}" ]]; then
   fi
   cp -f "${EARLY_BOOT}" "${tmpdir}/early-boot.sh"
   chmod 755 "${tmpdir}/early-boot.sh"
-  layers+=("early-boot.sh:${SCRIPT_MEDIA_TYPE}")
+  layers+=("early-boot.sh:${EARLY_MEDIA_TYPE}")
+fi
+
+if [[ -n "${UNMOUNT}" ]]; then
+  if [[ ! -f "${UNMOUNT}" ]]; then
+    echo "error: unmount script not found: ${UNMOUNT}" >&2
+    exit 1
+  fi
+  cp -f "${UNMOUNT}" "${tmpdir}/unmount.sh"
+  chmod 755 "${tmpdir}/unmount.sh"
+  layers+=("unmount.sh:${UNMOUNT_MEDIA_TYPE}")
+fi
+
+if [[ -n "${SHUTDOWN}" ]]; then
+  if [[ ! -f "${SHUTDOWN}" ]]; then
+    echo "error: shutdown binary not found: ${SHUTDOWN}" >&2
+    exit 1
+  fi
+  cp -f "${SHUTDOWN}" "${tmpdir}/shutdown-linux-arm64"
+  chmod 755 "${tmpdir}/shutdown-linux-arm64"
+  layers+=("shutdown-linux-arm64:${SHUTDOWN_MEDIA_TYPE}")
 fi
 
 annotate=(
@@ -57,6 +81,9 @@ annotate=(
 
 echo "Publishing ${IMAGE}:main and :${SHA_TAG}"
 echo "  microinit: $(wc -c < "${tmpdir}/microinit-linux-arm64") bytes"
+if [[ -f "${tmpdir}/shutdown-linux-arm64" ]]; then
+  echo "  shutdown:  $(wc -c < "${tmpdir}/shutdown-linux-arm64") bytes"
+fi
 (
   cd "${tmpdir}"
   oras push "${IMAGE}:main" "${layers[@]}" "${annotate[@]}"

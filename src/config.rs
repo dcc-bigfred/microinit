@@ -14,6 +14,7 @@ pub const DEFAULT_LOGS_TTY: &str = "/dev/tty2";
 pub const DEFAULT_INIT_LOGS_TTY: &str = "/dev/tty3";
 pub const DEFAULT_LOG_LINES: usize = 300;
 pub const DEFAULT_EARLY_BOOT: &str = "/etc/microinit/early-boot.sh";
+pub const DEFAULT_UNMOUNT: &str = "/etc/microinit/unmount.sh";
 
 /// Hub-default config path (`/data/etc/...` when data root is unset).
 /// Prefer [`default_config_path`] which honors `DATA_DIR`.
@@ -42,6 +43,10 @@ pub fn default_dropins_dir() -> PathBuf {
 #[must_use]
 pub fn default_early_boot_override_path() -> PathBuf {
     crate::datadir::path(["etc", "microinit", "early-boot.sh"])
+}
+
+pub fn default_unmount_override_path() -> PathBuf {
+    crate::datadir::path(["etc", "microinit", "unmount.sh"])
 }
 
 #[must_use]
@@ -620,7 +625,7 @@ pub fn example_config() -> Config {
                 shutdown_wait_secs: 5,
                 background: false,
                 depends_on: vec![],
-                cmd: Some("/etc/init.d/S15-network".into()),
+                cmd: Some("/etc/init.d/network".into()),
                 start_cmd: None,
                 stop_cmd: None,
                 restart_cmd: None,
@@ -648,7 +653,7 @@ pub fn example_config() -> Config {
                 shutdown_wait_secs: 5,
                 background: false,
                 depends_on: vec!["network".into()],
-                cmd: Some("/etc/init.d/S30-redis".into()),
+                cmd: Some("/etc/init.d/redis".into()),
                 start_cmd: None,
                 stop_cmd: None,
                 restart_cmd: None,
@@ -691,6 +696,8 @@ pub struct Paths {
     pub dropins_dir: PathBuf,
     pub early_boot: PathBuf,
     pub early_boot_override: PathBuf,
+    pub unmount: PathBuf,
+    pub unmount_override: PathBuf,
 }
 
 impl Default for Paths {
@@ -702,6 +709,8 @@ impl Default for Paths {
             dropins_dir: default_dropins_dir(),
             early_boot: PathBuf::from(DEFAULT_EARLY_BOOT),
             early_boot_override: default_early_boot_override_path(),
+            unmount: PathBuf::from(DEFAULT_UNMOUNT),
+            unmount_override: default_unmount_override_path(),
         }
     }
 }

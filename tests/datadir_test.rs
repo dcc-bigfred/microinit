@@ -58,6 +58,10 @@ fn paths_default_honors_env() {
             dir.join("etc/microinit/early-boot.sh")
         );
         assert_eq!(
+            paths.unmount_override,
+            dir.join("etc/microinit/unmount.sh")
+        );
+        assert_eq!(
             paths.override_file,
             dir.join("etc/microinit.services.enabled-override.json")
         );

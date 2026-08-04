@@ -15,11 +15,19 @@ path = "src/lib.rs"
 name = "microinit"
 path = "src/main.rs"
 
+[[bin]]
+name = "shutdown"
+path = "src/bin/shutdown.rs"
+
 [features]
-# OpenTelemetry (OTLP) is on by default; build without it via `--no-default-features`.
-default = ["otel"]
+# OpenTelemetry (OTLP) and full PID-1 init are on by default.
+# Android / supervise-only builds: `--no-default-features`.
+default = ["otel", "init"]
 # OTel export; HTTP client (ureq) is always available for livenessProbe.httpUrl.
 otel = []
+# Full PID-1 init: early-boot, getty, TTY attach, unmount, reboot(2).
+# Off for Android (supervise-only) builds.
+init = []
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

@@ -1,0 +1,52 @@
+.Dd August 4, 2026
+.Dt SHUTDOWN 8
+.Os "BigFred OS"
+.Sh NAME
+.Nm shutdown
+.Nd ordered poweroff, reboot, or halt via microinit
+.Sh SYNOPSIS
+.Nm
+.Op Fl -socket Ns = Ns Ar path
+.Op Fl h | Fl P | Fl r | Fl H
+.Op Ar now
+.Sh DESCRIPTION
+.Nm
+asks the running
+.Xr microinit 8
+daemon (PID 1) to stop supervised services in reverse dependency order, run
+the late-unmount script, and then power off, reboot, or halt the machine.
+Communication uses the Unix control socket
+.Pq default Pa /run/microinit.sock .
+.Pp
+If the socket is missing or the request fails
+.Nm
+falls back to BusyBox
+.Pa /sbin/poweroff ,
+.Pa /sbin/reboot ,
+or
+.Pa /sbin/halt .
+.Pp
+Delayed shutdown and wall messages are not implemented; the optional
+.Ar now
+token is accepted for SysV compatibility and ignored.
+.Sh OPTIONS
+.Bl -tag -width Ds
+.It Fl h , Fl P , Cm poweroff
+Power off (default).
+.It Fl r , Cm reboot
+Reboot.
+.It Fl H , Cm halt
+Halt without powering off.
+.It Fl -socket Ar path
+Control socket path (default
+.Pa /run/microinit.sock ).
+.It Fl -help
+Print usage and exit.
+.El
+.Sh EXIT STATUS
+.Ex -std
+.Sh SEE ALSO
+.Xr microinit 8 ,
+.Xr unmount.sh 8
+.Sh AUTHORS
+.An BigFred

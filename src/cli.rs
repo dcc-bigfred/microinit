@@ -5,7 +5,63 @@ use std::path::Path;
 
 use crate::error::{Error, Result};
 use crate::ipc::{read_frame, request, write_frame};
-use crate::protocol::{Request, Response};
+use crate::protocol::{Request, Response, ShutdownMode};
+
+/// Result of parsing SysV-style `shutdown` argv (excluding `--socket`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShutdownCliMode {
+    Help,
+    Mode(ShutdownMode),
+}
+
+/// Parse SysV-compatible shutdown flags (`-h`/`-P`/`-r`/`-H`, `now`, …).
+pub fn parse_shutdown_args(args: &[impl AsRef<str>]) -> std::result::Result<ShutdownCliMode, String> {
+    let mut mode = ShutdownMode::Poweroff;
+    let mut seen = false;
+
+    for a in args {
+        let a = a.as_ref();
+        match a {
+            "--help" | "help" => return Ok(ShutdownCliMode::Help),
+            "-h" | "-P" | "--poweroff" | "poweroff" => {
+                if seen && mode != ShutdownMode::Poweroff {
+                    return Err("conflicting mode flags".into());
+                }
+                mode = ShutdownMode::Poweroff;
+                seen = true;
+            }
+            "-r" | "--reboot" | "reboot" => {
+                if seen && mode != ShutdownMode::Reboot {
+                    return Err("conflicting mode flags".into());
+                }
+                mode = ShutdownMode::Reboot;
+                seen = true;
+            }
+            "-H" | "--halt" | "halt" => {
+                if seen && mode != ShutdownMode::Halt {
+                    return Err("conflicting mode flags".into());
+                }
+                mode = ShutdownMode::Halt;
+                seen = true;
+            }
+            "now" | "+0" | "0" => {
+                // SysV compatibility; delayed shutdown is not implemented.
+            }
+            _ if a.starts_with('-') => {
+                return Err(format!("unknown option {a:?}"));
+            }
+            _ => {
+                // Ignore wall message / unsupported time specs.
+            }
+        }
+    }
+    Ok(ShutdownCliMode::Mode(mode))
+}
+
+/// Ask the daemon to begin ordered shutdown (`poweroff` / `reboot` / `halt`).
+pub fn cmd_shutdown(socket: &Path, mode: ShutdownMode) -> Result<()> {
+    simple_ok(socket, Request::Shutdown { mode })
+}
 
 pub fn cmd_list(socket: &Path) -> Result<()> {
     match request(socket, &Request::List)? {

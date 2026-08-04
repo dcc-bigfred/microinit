@@ -56,7 +56,7 @@ fn resolve_cmd_fallback() {
         shutdown_wait_secs: 5,
         background: false,
         depends_on: vec![],
-        cmd: Some("/etc/init.d/S30-redis".into()),
+        cmd: Some("/etc/init.d/redis".into()),
         start_cmd: None,
         stop_cmd: None,
         restart_cmd: None,
@@ -64,11 +64,11 @@ fn resolve_cmd_fallback() {
         cwd: "/".into(),
         liveness_probe: None,
     };
-    assert_eq!(svc.resolve_start().unwrap(), "/etc/init.d/S30-redis start");
-    assert_eq!(svc.resolve_stop().unwrap(), "/etc/init.d/S30-redis stop");
+    assert_eq!(svc.resolve_start().unwrap(), "/etc/init.d/redis start");
+    assert_eq!(svc.resolve_stop().unwrap(), "/etc/init.d/redis stop");
     assert_eq!(
         svc.resolve_restart().unwrap(),
-        "/etc/init.d/S30-redis restart"
+        "/etc/init.d/redis restart"
     );
 }
 
@@ -325,7 +325,7 @@ fn parses_liveness_probe_with_defaults() {
       "services": [{
         "name": "net",
         "daemon": false,
-        "cmd": "/etc/init.d/S15-network",
+        "cmd": "/etc/init.d/network",
         "livenessProbe": {
           "cmd": "/usr/sbin/configure-ethernet check"
         }

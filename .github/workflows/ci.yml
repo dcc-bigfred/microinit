@@ -38,13 +38,19 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
 
-      - name: Clippy (no otel)
+      - name: Clippy (no otel, with init)
+        run: cargo clippy --all-targets --no-default-features --features init -- -D warnings
+
+      - name: Clippy (supervise-only)
         run: cargo clippy --all-targets --no-default-features -- -D warnings
 
       - name: Test
         run: cargo test --locked
 
-      - name: Test (no otel)
+      - name: Test (no otel, with init)
+        run: cargo test --locked --no-default-features --features init
+
+      - name: Test (supervise-only)
         run: cargo test --locked --no-default-features
 
       - name: Test (release-assertions)
@@ -108,29 +114,36 @@ jobs:
           cp -f "target/${{ matrix.rust_target }}/release/microinit" "dist/${{ matrix.dist_name }}"
           chmod 755 "dist/${{ matrix.dist_name }}"
 
+          SHUTDOWN_DIST="shutdown-linux-${{ matrix.name }}"
+          cp -f "target/${{ matrix.rust_target }}/release/shutdown" "dist/${SHUTDOWN_DIST}"
+          chmod 755 "dist/${SHUTDOWN_DIST}"
+
           if [ "${{ matrix.name }}" = "arm64" ]; then
             cp -f scripts/early-boot.sh dist/early-boot.sh
             chmod 755 dist/early-boot.sh
+            cp -f scripts/unmount.sh dist/unmount.sh
+            chmod 755 dist/unmount.sh
             make man
             mkdir -p dist/man/man5 dist/man/man8
             cp -f man/man5/*.gz dist/man/man5/
             cp -f man/man8/*.gz dist/man/man8/
             (
               cd dist
-              sha256sum microinit-linux-arm64 early-boot.sh \
+              sha256sum microinit-linux-arm64 shutdown-linux-arm64 early-boot.sh unmount.sh \
                 man/man5/*.gz man/man8/*.gz > SHA256SUMS
             )
           fi
 
-          file "dist/${{ matrix.dist_name }}"
-          # Expect a static binary (no dynamic libc dependency).
-          if ldd "dist/${{ matrix.dist_name }}" 2>&1 | grep -qi 'not a dynamic\|statically linked'; then
-            echo "static binary OK"
-          else
-            echo "warning: ldd output:" >&2
-            ldd "dist/${{ matrix.dist_name }}" >&2 || true
-          fi
-          ls -lh "dist/${{ matrix.dist_name }}"
+          for f in "dist/${{ matrix.dist_name }}" "dist/${SHUTDOWN_DIST}"; do
+            file "$f"
+            if ldd "$f" 2>&1 | grep -qi 'not a dynamic\|statically linked'; then
+              echo "static binary OK: $f"
+            else
+              echo "warning: ldd output for $f:" >&2
+              ldd "$f" >&2 || true
+            fi
+            ls -lh "$f"
+          done
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -169,7 +182,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish microinit-linux-arm64
-        run: ./scripts/publish-oci-microinit.sh dist/microinit-linux-arm64 dist/early-boot.sh
+        run: ./scripts/publish-oci-microinit.sh dist/microinit-linux-arm64 dist/early-boot.sh dist/unmount.sh dist/shutdown-linux-arm64
 
       - name: Job summary
         run: |
@@ -177,6 +190,112 @@ jobs:
             echo "### OCI publish (ORAS)"
             echo ""
             echo "- Image: \`ghcr.io/dcc-bigfred/microinit-linux-arm64\`"
+            echo "- Tags: \`main\`, \`sha-${GITHUB_SHA::7}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  build-android:
+    name: Build Android (${{ matrix.name }})
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: arm64
+            arch: arm64
+          - name: armv7
+            arch: armv7
+          - name: x86_64
+            arch: x86_64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: android-${{ matrix.name }}
+
+      - name: Set up Android NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r27c
+          link-to-sdk: false
+
+      - name: Build Android binaries
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          ANDROID_API: "24"
+        run: ./scripts/build-android.sh ${{ matrix.arch }}
+
+      - name: Verify Bionic linkage
+        run: |
+          set -euo pipefail
+          for f in dist/microinit-android-* dist/shutdown-android-*; do
+            [ -f "$f" ] || continue
+            file "$f"
+            if ! file "$f" | grep -qi 'android\|linker64\|linker'; then
+              echo "error: expected Android/Bionic binary: $f" >&2
+              file "$f" >&2
+              exit 1
+            fi
+            # Must not be a glibc dynamic binary.
+            if readelf -l "$f" 2>/dev/null | grep -q 'Requesting program interpreter: /lib/ld-linux'; then
+              echo "error: glibc-linked binary (want Bionic): $f" >&2
+              exit 1
+            fi
+            ls -lh "$f"
+          done
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-android-${{ matrix.name }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 90
+
+  publish-oci-android:
+    name: Publish Android OCI artifact to GHCR (ORAS)
+    needs: build-android
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download Android arm64 binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries-android-arm64
+          path: dist/
+
+      - name: Set up ORAS
+        uses: oras-project/setup-oras@v1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish microinit-android-arm64
+        run: ./scripts/publish-oci-microinit-android.sh dist/microinit-android-arm64 dist/shutdown-android-arm64
+
+      - name: Job summary
+        run: |
+          {
+            echo "### Android OCI publish (ORAS)"
+            echo ""
+            echo "- Image: \`ghcr.io/dcc-bigfred/microinit-android-arm64\`"
             echo "- Tags: \`main\`, \`sha-${GITHUB_SHA::7}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 

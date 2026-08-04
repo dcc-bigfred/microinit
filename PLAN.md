@@ -2,7 +2,7 @@
 
 ## 1. Cel i zakres
 
-`microinit` to nowy system init w Rust, ktory **zastepuje BusyBox init jako PID 1** oraz jednorazowy orchestrator `biginit`. Jeden binarny plik, wiele podkomend. Uslugi deklaratywne w `/data/etc/microinit.json`; kazda usluga moze miec wlasne komendy (`startCmd`/`stopCmd`/`restartCmd`) albo odwolywac sie do istniejacych skryptow SysV przez `cmd` (np. `cmd: "/etc/init.d/S30-redis"` -> uruchamia `cmd start|stop|restart`). Migracja stopniowa.
+`microinit` to nowy system init w Rust, ktory **zastepuje BusyBox init jako PID 1** oraz jednorazowy orchestrator `biginit`. Jeden binarny plik, wiele podkomend. Uslugi deklaratywne w `/data/etc/microinit.json`; kazda usluga moze miec wlasne komendy (`startCmd`/`stopCmd`/`restartCmd`) albo odwolywac sie do istniejacych skryptow SysV przez `cmd` (np. `cmd: "/etc/init.d/redis"` -> uruchamia `cmd start|stop|restart`). Migracja stopniowa.
 
 **Obowiazki PID 1:** montowanie pseudo-FS i `/data`, ladowanie/tworzenie konfigu, start uslug, nadzor (supervisor), reapowanie zombie, obsluga sygnalow, console getty, sterowanie IPC przez socket uniksowy, uporzadkowany shutdown (stop w odwrotnej kolejnosci, umount, `reboot(2)`).
 
@@ -96,7 +96,7 @@ Logika wstepnego rozruchu (montaz pseudo-FS, `/data`, seeding, bind shadow) jest
 - Skrypt bazowy: `/etc/microinit/early-boot.sh` (w overlay rootfs, dostarczany z obrazem).
 - Override (opcjonalny): `/data/etc/microinit/early-boot.sh` - jesli istnieje, microinit uzywa go zamiast bazowego (edycja bez przebudowy obrazu).
 - `early_boot.rs` to **cienki runner**: wybiera sciezke (override > bazowa), exec `/bin/sh <skrypt>`, czeka na zakonczenie, interpretuje exit code (0=ok, !=0=blad na console + log; przy bledzie microinit nie kontynuuje bo `/data` moze byc niezamontowane).
-- Skrypt odpowiada za (mirror obecnego `rcS` + `S00-mount`):
+- Skrypt odpowiada za (mirror obecnego `rcS` + `mount`):
   - `mount -t proc proc /proc`, `mount -t sysfs sysfs /sys`, `mount -t devtmpfs devtmpfs /dev` (lub `mdev -s`), `mount -t tmpfs tmpfs /tmp`, `/run`, `/var/log`, `/var/run`
   - `mount -o remount,rw /` lub utrzymanie RO; montaz `/data` po etykiecie `LABEL=bigfred-data`, fallback `mmcblk0p3`, fallback NVMe; `mkfs.ext4` jesli pusty
   - `mkdir -p /data/etc` rekursywnie (wymaganie: tworzenie katalogu i pliku konfigu przy starcie)
@@ -126,7 +126,7 @@ Jesli `/data/etc/microinit.json` nie istnieje: utworz katalog rekursywnie, zapis
       "successExitCodes": [0],
       "background": false,
       "dependsOn": ["network"],
-      "cmd": "/etc/init.d/S30-redis",
+      "cmd": "/etc/init.d/redis",
       "startCmd": null,
       "stopCmd": null,
       "restartCmd": null,

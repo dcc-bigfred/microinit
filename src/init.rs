@@ -2,19 +2,22 @@
 
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::thread;
 
+#[cfg(feature = "init")]
+use std::process::{Command, Stdio};
+
 use crate::config::{self, Paths, DEFAULT_CONSOLE, DEFAULT_INIT_LOGS_TTY, DEFAULT_LOGS_TTY};
 use crate::console::Console;
-use crate::constants::{GETTY_RESPAWN_DELAY, INIT_LOOP_SLEEP};
+#[cfg(feature = "init")]
+use crate::constants::GETTY_RESPAWN_DELAY;
+use crate::constants::INIT_LOOP_SLEEP;
 use crate::error::Result;
 use crate::ipc::{self, write_frame};
 use crate::logs::{boot_note, LogHub};
 use crate::protocol::{LogLevel, Request, Response};
 use crate::reaper::global_exits;
-use crate::shutdown::finalize;
 use crate::signals::{self, take_shutdown};
 use crate::supervisor::Supervisor;
 
@@ -69,35 +72,47 @@ pub fn run(opts: InitOpts) -> Result<()> {
         );
     }
 
-    if opts.skip_early_boot {
-        boot_note(
-            init_logs_preview,
-            "skipping early-boot (--no-early-boot / supervise)",
-        );
-    } else {
-        match crate::early_boot::run(
-            &opts.paths,
-            &opts.logs_tty,
-            &opts.init_logs_tty,
-            &opts.console,
-        ) {
-            Ok(()) => {
-                boot_note(
-                    init_logs_preview,
-                    "early-boot finished; loading configuration from disk",
-                );
-            }
-            Err(e) => {
-                boot_note(init_logs_preview, &format!("early-boot failed: {e}"));
-                if opts.require_early_boot {
-                    return Err(e);
+    #[cfg(feature = "init")]
+    {
+        if opts.skip_early_boot {
+            boot_note(
+                init_logs_preview,
+                "skipping early-boot (--no-early-boot / supervise)",
+            );
+        } else {
+            match crate::early_boot::run(
+                &opts.paths,
+                &opts.logs_tty,
+                &opts.init_logs_tty,
+                &opts.console,
+            ) {
+                Ok(()) => {
+                    boot_note(
+                        init_logs_preview,
+                        "early-boot finished; loading configuration from disk",
+                    );
                 }
-                boot_note(
-                    init_logs_preview,
-                    "continuing without early-boot; loading configuration from disk",
-                );
+                Err(e) => {
+                    boot_note(init_logs_preview, &format!("early-boot failed: {e}"));
+                    if opts.require_early_boot {
+                        return Err(e);
+                    }
+                    boot_note(
+                        init_logs_preview,
+                        "continuing without early-boot; loading configuration from disk",
+                    );
+                }
             }
         }
+    }
+    #[cfg(not(feature = "init"))]
+    {
+        let _ = opts.skip_early_boot;
+        let _ = opts.require_early_boot;
+        boot_note(
+            init_logs_preview,
+            "early-boot disabled (supervise-only / no-init build)",
+        );
     }
 
     // Always (re)load JSON after early-boot: the script mounts `$DATA_DIR` and
@@ -190,13 +205,21 @@ pub fn run(opts: InitOpts) -> Result<()> {
     );
 
     // Getty only for full init as PID 1 — never for supervise (also often PID 1 in containers).
-    if opts.spawn_getty && std::process::id() == 1 {
-        let console_dev = opts.console.clone();
-        thread::spawn(move || getty_respawn(&console_dev));
-    } else if !opts.spawn_getty {
-        hub.emit_init(LogLevel::Info, "getty disabled (supervise)");
-    } else {
-        hub.emit_init(LogLevel::Info, "not PID 1; skipping getty respawn");
+    #[cfg(feature = "init")]
+    {
+        if opts.spawn_getty && std::process::id() == 1 {
+            let console_dev = opts.console.clone();
+            thread::spawn(move || getty_respawn(&console_dev));
+        } else if !opts.spawn_getty {
+            hub.emit_init(LogLevel::Info, "getty disabled (supervise)");
+        } else {
+            hub.emit_init(LogLevel::Info, "not PID 1; skipping getty respawn");
+        }
+    }
+    #[cfg(not(feature = "init"))]
+    {
+        let _ = opts.spawn_getty;
+        hub.emit_init(LogLevel::Info, "getty disabled (supervise-only / no-init build)");
     }
 
     let etc_dir = opts
@@ -207,6 +230,14 @@ pub fn run(opts: InitOpts) -> Result<()> {
         .unwrap_or_else(|| PathBuf::from("/data/etc"));
     let dropins_dir = opts.paths.dropins_dir.clone();
     let paths_for_reload = opts.paths.clone();
+    #[cfg(feature = "init")]
+    let paths_for_unmount = opts.paths.clone();
+    #[cfg(feature = "init")]
+    let unmount_logs_tty = logs_tty.clone();
+    #[cfg(feature = "init")]
+    let unmount_init_logs_tty = init_logs_tty.clone();
+    #[cfg(feature = "init")]
+    let unmount_console = opts.console.clone();
     let socket_override = opts.socket.clone();
     let (reload_rx, _watch_stop) =
         match crate::config_watch::spawn(etc_dir, dropins_dir, hub.clone()) {
@@ -253,8 +284,34 @@ pub fn run(opts: InitOpts) -> Result<()> {
         if let Some(mode) = take_shutdown() {
             hub.emit_init(LogLevel::Info, format!("shutdown requested: {mode}"));
             supervisor.stop_all_ordered();
+            #[cfg(feature = "init")]
+            {
+                // Late unmount after all services are stopped; failures must not
+                // block reboot/poweroff (stuck umount would hang the board forever).
+                hub.emit_init(LogLevel::Info, "running late-shutdown unmount");
+                if let Err(e) = crate::unmount::run(
+                    &paths_for_unmount,
+                    &unmount_logs_tty,
+                    &unmount_init_logs_tty,
+                    &unmount_console,
+                ) {
+                    hub.emit_init(
+                        LogLevel::Warn,
+                        format!("unmount failed (continuing to {mode}): {e}"),
+                    );
+                }
+            }
             let _ = std::fs::remove_file(&socket_path);
-            finalize(mode);
+            #[cfg(feature = "init")]
+            crate::shutdown::finalize(mode);
+            #[cfg(not(feature = "init"))]
+            {
+                // Supervise-only / Android: stop + sync + clean exit (no reboot).
+                let _ = mode;
+                nix::unistd::sync();
+                hub.emit_init(LogLevel::Info, "supervise shutdown complete; exiting");
+                std::process::exit(0);
+            }
         }
 
         thread::sleep(INIT_LOOP_SLEEP);
@@ -379,6 +436,7 @@ fn respond_result(stream: &mut UnixStream, res: Result<()>) -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "init")]
 fn getty_respawn(console: &str) {
     let tty = console.trim_start_matches("/dev/");
     loop {
@@ -401,6 +459,7 @@ fn getty_respawn(console: &str) {
 }
 
 /// Used when argv0 is `init` or we are PID 1 without a subcommand.
+#[cfg(feature = "init")]
 #[must_use]
 pub fn should_auto_init() -> bool {
     if std::process::id() == 1 {

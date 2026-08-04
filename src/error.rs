@@ -31,6 +31,9 @@ pub enum Error {
     #[error("early-boot failed with exit code {0}")]
     EarlyBoot(i32),
 
+    #[error("unmount script failed with exit code {0}")]
+    Unmount(i32),
+
     #[error("IPC error: {0}")]
     Ipc(String),
 

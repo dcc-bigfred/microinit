@@ -1,4 +1,4 @@
-//! Unit/integration tests for microinit::early_boot
+//! Unit/integration tests for microinit::unmount
 
 #![cfg(feature = "init")]
 
@@ -7,12 +7,12 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 use microinit::config::Paths;
-use microinit::early_boot::*;
 use microinit::error::Error;
+use microinit::unmount::*;
 
 fn temp_paths(label: &str) -> (Paths, std::path::PathBuf) {
     let dir = std::env::temp_dir().join(format!(
-        "microinit-eb-{}-{}-{}",
+        "microinit-um-{}-{}-{}",
         label,
         std::process::id(),
         std::time::SystemTime::now()
@@ -49,11 +49,11 @@ fn write_exec(path: &Path, body: &str) {
 #[test]
 fn resolve_prefers_override() {
     let (paths, dir) = temp_paths("pref");
-    write_exec(&paths.early_boot, "#!/bin/sh\nexit 0\n");
-    write_exec(&paths.early_boot_override, "#!/bin/sh\nexit 0\n");
+    write_exec(&paths.unmount, "#!/bin/sh\nexit 0\n");
+    write_exec(&paths.unmount_override, "#!/bin/sh\nexit 0\n");
     assert_eq!(
         resolve_script(&paths),
-        ScriptSource::Path(paths.early_boot_override.clone())
+        ScriptSource::Path(paths.unmount_override.clone())
     );
     let _ = fs::remove_dir_all(dir);
 }
@@ -61,10 +61,10 @@ fn resolve_prefers_override() {
 #[test]
 fn resolve_falls_back_to_base() {
     let (paths, dir) = temp_paths("base");
-    write_exec(&paths.early_boot, "#!/bin/sh\nexit 0\n");
+    write_exec(&paths.unmount, "#!/bin/sh\nexit 0\n");
     assert_eq!(
         resolve_script(&paths),
-        ScriptSource::Path(paths.early_boot.clone())
+        ScriptSource::Path(paths.unmount.clone())
     );
     let _ = fs::remove_dir_all(dir);
 }
@@ -73,15 +73,13 @@ fn resolve_falls_back_to_base() {
 fn resolve_embedded_when_missing() {
     let (paths, dir) = temp_paths("none");
     assert_eq!(resolve_script(&paths), ScriptSource::Embedded);
-    assert!(EMBEDDED_EARLY_BOOT.contains("mount -a"));
+    assert!(EMBEDDED_UNMOUNT.contains("umount"));
     let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
 fn run_uses_embedded_when_no_on_disk_script() {
     let (paths, dir) = temp_paths("emb");
-    // Tiny stand-in would be nicer, but run() uses the real embedded script.
-    // Ensure config parent is created and embedded path is selected.
     assert_eq!(resolve_script(&paths), ScriptSource::Embedded);
     run_script_bytes("#!/bin/sh\nexit 0\n", "/dev/null", "/dev/null", "/dev/null").unwrap();
     let _ = fs::remove_dir_all(dir);
@@ -91,20 +89,20 @@ fn run_uses_embedded_when_no_on_disk_script() {
 fn run_script_bytes_failure() {
     let err =
         run_script_bytes("#!/bin/sh\nexit 9\n", "/dev/null", "/dev/null", "/dev/null").unwrap_err();
-    assert!(matches!(err, Error::EarlyBoot(9)));
+    assert!(matches!(err, Error::Unmount(9)));
 }
 
 #[test]
 fn run_script_success_and_failure() {
     let (paths, dir) = temp_paths("run");
     write_exec(
-        &paths.early_boot,
+        &paths.unmount,
         "#!/bin/sh\ntest \"$MICROINIT_LOGS_TTY\" = /dev/ttyX \\\n  -a \"$MICROINIT_INIT_LOGS_TTY\" = /dev/ttyZ \\\n  -a -n \"$DATA_DIR\"\n",
     );
-    run_script(&paths.early_boot, "/dev/ttyX", "/dev/ttyZ", "/dev/ttyY").unwrap();
+    run_script(&paths.unmount, "/dev/ttyX", "/dev/ttyZ", "/dev/ttyY").unwrap();
 
-    write_exec(&paths.early_boot, "#!/bin/sh\nexit 7\n");
-    let err = run_script(&paths.early_boot, "/dev/null", "/dev/null", "/dev/null").unwrap_err();
-    assert!(matches!(err, Error::EarlyBoot(7)));
+    write_exec(&paths.unmount, "#!/bin/sh\nexit 7\n");
+    let err = run_script(&paths.unmount, "/dev/null", "/dev/null", "/dev/null").unwrap_err();
+    assert!(matches!(err, Error::Unmount(7)));
     let _ = fs::remove_dir_all(dir);
 }

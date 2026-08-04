@@ -1,15 +1,19 @@
+# microinit
+
 <p align="center">
   <img src="docs/logo.png" alt="microinit" width="240">
 </p>
 
-# microinit
-
 Lightweight PID 1 init system and service supervisor designed for BigFred OS.
 Works in embedded systems based on Linux as well as in containers.
 
-In **`supervise`** mode it can also act as a **supervisord replacement**: the same
-process watches a declarative JSON service list, restarts daemons, and exposes
-start/stop/logs over a Unix socket — without early-boot, getty, or console TTYs.
+Lightning fast and solid-rock reliable. Inspired by supervisord and Kubernetes, handles dependencies, able to self-heal.
+
+The services are health-checked with liveness probes and restarted. Cascade services depending on others are started as soon as dependency is started.
+
+There are two modes - `microinit init` and `microinit supervise`. Init replaces `/sbin/init`, and supervise replaces `supervisord`.
+
+Natively exports metrics to OpenTelemetry.
 
 ## Features
 
@@ -18,11 +22,18 @@ start/stop/logs over a Unix socket — without early-boot, getty, or console TTY
 - inotify hot-reload of JSON config (no polling)
 - `microinit supervise` — container / host supervisor (supervisord-like)
 - Thread-per-service supervision with optional restart + backoff
-- Unix socket IPC (`start` / `stop` / `restart` / `enable` / `disable` / `list` / `logs`)
-- Optional OpenTelemetry metrics (on by default; disable with `--no-default-features`) → Grafana Alloy when `openTelemetry.enable` is true
+- Unix socket IPC (`start` / `stop` / `restart` / `enable` / `disable` / `list` / `logs` / `shutdown`)
+- Optional OpenTelemetry metrics (feature `otel`, on by default)
+- Full PID-1 init (feature `init`, on by default): early-boot, getty, TTY attach,
+  late unmount, `reboot(2)`. Android builds omit `init` (supervise-only).
+- Companion `shutdown` binary — SysV-style ordered poweroff/reboot/halt via the socket
+  (BusyBox `/sbin/*` fallback only when built with `init`)
 - Mixed service logs on a dedicated TTY (default `/dev/tty2`); init logs on `/dev/tty3`
+  (Linux `init` mode only)
 - Early boot via `/etc/microinit/early-boot.sh` (or `$DATA_DIR/etc/microinit/early-boot.sh`);
-  embedded portable script if neither exists
+  embedded portable script if neither exists (`init` feature)
+- Late unmount via `/etc/microinit/unmount.sh` (or data-root override) at end of shutdown
+  (`init` feature)
 
 ## Build
 
@@ -30,18 +41,33 @@ start/stop/logs over a Unix socket — without early-boot, getty, or console TTY
 export RUSTUP_TOOLCHAIN=stable
 make build
 make release
-cargo build --release                        # includes OpenTelemetry exporter
-cargo build --release --no-default-features  # without OpenTelemetry
-make release-musl   # aarch64-unknown-linux-musl static
+cargo build --release                                 # otel + init (default)
+cargo build --release --no-default-features --features init  # init without OTel
+cargo build --release --no-default-features           # supervise-only (Android-like)
+make release-musl      # aarch64-unknown-linux-musl static (microinit + shutdown)
+# Android (requires ANDROID_NDK_HOME, e.g. NDK r27c) — supervise-only, no init:
+make release-android                 # arm64
+make release-android ARCHES="arm64 armv7 x86_64"
 make test
 make man
+```
+
+Android example (app-private socket path):
+
+```bash
+DATA_DIR=/data/data/com.example.app/files/microinit \
+  ./microinit-android-arm64 supervise \
+  --socket /data/data/com.example.app/files/microinit/microinit.sock \
+  --config /data/data/com.example.app/files/microinit/etc/microinit.json \
+  --console /dev/null
 ```
 
 ## Tests
 
 ```bash
 cargo test
-cargo test --no-default-features
+cargo test --no-default-features --features init   # no OTel
+cargo test --no-default-features                   # supervise-only
 ```
 
 ## Local test harness
@@ -72,13 +98,16 @@ See [`grafana/alloy/microinit.alloy`](grafana/alloy/microinit.alloy) and
 
 ## CI / distribution
 
-- **ORAS** (arm64 + early-boot): `ghcr.io/dcc-bigfred/microinit-linux-arm64`
+- **ORAS linux** (arm64 + early-boot + unmount + shutdown): `ghcr.io/dcc-bigfred/microinit-linux-arm64`
+- **ORAS android** (supervise-only arm64 + shutdown): `ghcr.io/dcc-bigfred/microinit-android-arm64`
+- **GitHub Release** also ships Android `armv7` / `x86_64` binaries (also supervise-only)
 - **Container** (distroless multiarch, `supervise`): `ghcr.io/dcc-bigfred/microinit`
 
 ```bash
 docker run --rm -v "$PWD/data:/data" ghcr.io/dcc-bigfred/microinit:main
 # ENTRYPOINT /microinit  CMD supervise
 oras pull ghcr.io/dcc-bigfred/microinit-linux-arm64:latest-release -o ./out
+oras pull ghcr.io/dcc-bigfred/microinit-android-arm64:latest-release -o ./out
 ```
 
 ## CLI

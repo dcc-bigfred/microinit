@@ -34,6 +34,20 @@ The portable embedded script:
 Mount essential pseudo-filesystems if missing
 .Pq Pa /proc , Pa /sys , Pa /dev , Pa /dev/pts , Pa /run , Pa /tmp
 .It
+Remount
+.Pa /
+read-only when already mounted, then run
+.Ic fsck -y
+on every real block filesystem listed in
+.Pa /etc/fstab
+.Pq and
+.Ic fsck -A -y
+when available
+before any block device is mounted.
+Already-mounted devices and unformatted partitions are skipped; non-zero
+.Nm fsck
+exit codes are logged and do not abort boot.
+.It
 Apply
 .Pa /etc/fstab
 via
@@ -44,7 +58,7 @@ via
 Product images may install
 .Pa /etc/microinit/early-boot.sh
 with a distro-specific script
-.Pq for example BigFred OS mounts Pa /data , seeds configs, bind-mounts Pa /etc/shadow
+.Pq for example BigFred OS also fscks the Pa /data candidates, mounts Pa /data , seeds configs, bind-mounts Pa /etc/shadow
 or an override under the data root; otherwise the embedded portable script runs.
 .Ss Environment
 .Bl -tag -width MICROINIT_INIT_LOGS_TTY
@@ -69,5 +83,7 @@ Non-zero aborts
 boot when early-boot is required.
 .Sh SEE ALSO
 .Xr microinit 8 ,
+.Xr unmount.sh 8 ,
 .Xr fstab 5 ,
-.Xr mount 8
+.Xr mount 8 ,
+.Xr fsck 8

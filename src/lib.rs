@@ -10,6 +10,9 @@
 //!
 //! Signal installation in [`signals`] is the only intentional `unsafe` (documented
 //! `SAFETY:` — async-signal-safe handlers only).
+//!
+//! Feature `init` (default) enables PID-1 early-boot, getty, unmount, and
+//! `reboot(2)`. Android / supervise-only builds use `--no-default-features`.
 
 pub mod cli;
 pub mod config;
@@ -17,6 +20,7 @@ pub mod config_watch;
 pub mod console;
 pub mod constants;
 pub mod datadir;
+#[cfg(feature = "init")]
 pub mod early_boot;
 pub mod error;
 pub mod graph;
@@ -29,10 +33,14 @@ pub mod otel;
 pub mod protocol;
 pub mod reaper;
 pub mod service;
+#[cfg(feature = "init")]
+#[cfg_attr(target_os = "android", allow(unsafe_code))]
 pub mod shutdown;
 #[allow(unsafe_code)]
 pub mod signals;
 pub mod supervisor;
 pub mod syncutil;
+#[cfg(feature = "init")]
+pub mod unmount;
 
 pub use error::{Error, Result};

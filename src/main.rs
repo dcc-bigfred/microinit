@@ -2,16 +2,18 @@
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::thread;
-use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 use microinit::cli;
-use microinit::config::{
-    self, default_config_path, DEFAULT_CONSOLE, DEFAULT_INIT_LOGS_TTY, DEFAULT_LOGS_TTY,
-    DEFAULT_SOCKET,
-};
+use microinit::config::{self, default_config_path, DEFAULT_INIT_LOGS_TTY, DEFAULT_LOGS_TTY, DEFAULT_SOCKET};
 use microinit::init;
+
+#[cfg(feature = "init")]
+use microinit::config::DEFAULT_CONSOLE;
+#[cfg(feature = "init")]
+use std::thread;
+#[cfg(feature = "init")]
+use std::time::Duration;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -31,6 +33,7 @@ struct Cli {
 #[derive(Subcommand, Debug)]
 enum Commands {
     /// Run as PID 1 / system init (start services, supervise, IPC)
+    #[cfg(feature = "init")]
     Init {
         /// TTY for mixed service stdout/stderr logs
         #[arg(long, default_value = DEFAULT_LOGS_TTY)]
@@ -108,6 +111,7 @@ fn paths_for_config(config_path: &Path) -> config::Paths {
     paths
 }
 
+#[cfg(feature = "init")]
 fn default_init_opts(socket: String) -> init::InitOpts {
     init::InitOpts {
         logs_tty: DEFAULT_LOGS_TTY.to_string(),
@@ -126,6 +130,7 @@ fn default_init_opts(socket: String) -> init::InitOpts {
 /// PID 1 must never exit: the kernel panics ("Attempted to kill init!").
 /// Bypass clap entirely — leftover kernel cmdline args become argv and would
 /// make `Cli::parse()` call `exit(2)` before our auto-init fallback.
+#[cfg(feature = "init")]
 fn run_as_pid1() -> ! {
     eprintln!("microinit: running as PID 1 (init)");
     let opts = default_init_opts(DEFAULT_SOCKET.to_string());
@@ -142,6 +147,7 @@ fn run_as_pid1() -> ! {
 fn main() -> ExitCode {
     // Kernel may exec /sbin/init with unrecognized cmdline tokens as argv.
     // Never go through clap when we are already PID 1.
+    #[cfg(feature = "init")]
     if std::process::id() == 1 {
         run_as_pid1();
     }
@@ -150,6 +156,7 @@ fn main() -> ExitCode {
         Ok(c) => c,
         Err(e) => {
             // argv0 `init` without a subcommand (or with junk args): still boot.
+            #[cfg(feature = "init")]
             if init::should_auto_init() {
                 eprintln!("microinit: CLI parse failed ({e}); falling back to init mode");
                 let opts = default_init_opts(DEFAULT_SOCKET.to_string());
@@ -171,6 +178,7 @@ fn main() -> ExitCode {
 
     let command = match cli.command {
         Some(c) => c,
+        #[cfg(feature = "init")]
         None if init::should_auto_init() => Commands::Init {
             logs_tty: DEFAULT_LOGS_TTY.to_string(),
             init_logs_tty: DEFAULT_INIT_LOGS_TTY.to_string(),
@@ -187,6 +195,7 @@ fn main() -> ExitCode {
     };
 
     let result = match command {
+        #[cfg(feature = "init")]
         Commands::Init {
             logs_tty,
             init_logs_tty,

@@ -95,16 +95,16 @@ Minimal long-running service (foreground binary — preferred so microinit can t
   "startWaitSecs": 1,
   "shutdownWaitSecs": 5,
   "dependsOn": ["network"],
-  "cmd": "/etc/init.d/S99-myapp",
+  "cmd": "/etc/init.d/myapp",
   "cwd": "/"
 }
 ```
 
-With `cmd` set to `/etc/init.d/S99-myapp`, microinit runs:
+With `cmd` set to `/etc/init.d/myapp`, microinit runs:
 
-- start → `/etc/init.d/S99-myapp start`  
-- stop → `/etc/init.d/S99-myapp stop`  
-- restart → `/etc/init.d/S99-myapp restart`  
+- start → `/etc/init.d/myapp start`  
+- stop → `/etc/init.d/myapp stop`  
+- restart → `/etc/init.d/myapp restart`  
 
 Or set explicit commands:
 
@@ -135,7 +135,7 @@ Example one-shot with recovery (network bring-up):
 {
   "name": "network",
   "daemon": false,
-  "cmd": "/etc/init.d/S15-network",
+  "cmd": "/etc/init.d/network",
   "livenessProbe": {
     "cmd": "/usr/sbin/configure-ethernet check",
     "successExitCodes": [0],
@@ -203,7 +203,9 @@ Typical hub boot:
 5. Console shows `[ OK ]` / `[ FAIL ]` style status; getty on the console TTY.  
 6. Control socket listens; config files are watched for reload.  
 
-In **`supervise`** mode there is no early-boot and no getty — only the supervisor + socket (good for containers).
+On shutdown (`shutdown -r`, IPC `shutdown`, SIGTERM, …): services stop in reverse dependency order, then the **unmount** script runs (unbind mounts / umount `/data`), then reboot or power-off.
+
+In **`supervise`** mode there is no early-boot and no getty — only the supervisor + socket (good for containers). Unmount still runs at the end of shutdown if a script is present (or the embedded default).
 
 ### Logs on a device
 
