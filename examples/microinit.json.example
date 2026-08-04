@@ -7,7 +7,7 @@
     "dir": "/data/logs",
     "logToFiles": false
   },
-  "socket": "/run/microinit.sock",
+  "socket": "/data/run/microinit.sock",
   "console": "/dev/tty1",
   "services": [
     {

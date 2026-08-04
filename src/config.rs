@@ -8,7 +8,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 
-pub const DEFAULT_SOCKET: &str = "/run/microinit.sock";
+/// Hub-default control socket when `DATA_DIR` is unset (`/data/run/...`).
+/// Prefer [`default_socket_path`] which honors `DATA_DIR`.
+pub const DEFAULT_SOCKET: &str = "/data/run/microinit.sock";
 pub const DEFAULT_CONSOLE: &str = "/dev/tty1";
 pub const DEFAULT_LOGS_TTY: &str = "/dev/tty2";
 pub const DEFAULT_INIT_LOGS_TTY: &str = "/dev/tty3";
@@ -23,6 +25,12 @@ pub const DEFAULT_CONFIG_PATH: &str = "/data/etc/microinit.json";
 #[must_use]
 pub fn default_config_path() -> PathBuf {
     crate::datadir::path(["etc", "microinit.json"])
+}
+
+/// Control socket under the persistent data root (`$DATA_DIR/run/microinit.sock`).
+#[must_use]
+pub fn default_socket_path() -> PathBuf {
+    crate::datadir::path(["run", "microinit.sock"])
 }
 
 #[must_use]
@@ -349,7 +357,7 @@ fn default_version() -> u32 {
 }
 
 fn default_socket() -> String {
-    DEFAULT_SOCKET.to_string()
+    default_socket_path().display().to_string()
 }
 
 fn default_console() -> String {
@@ -480,7 +488,7 @@ pub fn save_override(path: &Path, map: &HashMap<String, bool>) -> Result<()> {
 }
 
 pub fn load_config(path: &Path) -> Result<Config> {
-    let data = fs::read_to_string(path)?;
+    let data = fs::read_to_string(path).map_err(|e| Error::io_at(path, e))?;
     let cfg: Config = serde_json::from_str(&data)?;
     cfg.validate()?;
     Ok(cfg)
@@ -492,12 +500,14 @@ pub fn save_config(path: &Path, cfg: &Config) -> Result<()> {
 
 fn write_json_atomic(path: &Path, value: &impl Serialize) -> Result<()> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).map_err(|e| Error::io_at(parent, e))?;
+        }
     }
     let tmp = path.with_extension("json.tmp");
     let data = serde_json::to_string_pretty(value)?;
-    fs::write(&tmp, format!("{data}\n"))?;
-    fs::rename(&tmp, path)?;
+    fs::write(&tmp, format!("{data}\n")).map_err(|e| Error::io_at(&tmp, e))?;
+    fs::rename(&tmp, path).map_err(|e| Error::io_at(path, e))?;
     Ok(())
 }
 

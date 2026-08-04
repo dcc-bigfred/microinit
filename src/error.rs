@@ -1,5 +1,7 @@
 //! Error types for microinit.
 
+use std::path::{Path, PathBuf};
+
 use thiserror::Error;
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -9,6 +11,14 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub enum Error {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
+
+    /// I/O failure with the path that was being read or written.
+    #[error("I/O error on {path}: {source}")]
+    IoPath {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
 
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
@@ -42,4 +52,15 @@ pub enum Error {
 
     #[error("{0}")]
     Other(String),
+}
+
+impl Error {
+    /// Wrap an [`std::io::Error`] with the filesystem path involved.
+    #[must_use]
+    pub fn io_at(path: impl AsRef<Path>, source: std::io::Error) -> Self {
+        Self::IoPath {
+            path: path.as_ref().to_path_buf(),
+            source,
+        }
+    }
 }

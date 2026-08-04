@@ -1,7 +1,7 @@
 //! SysV-style `shutdown` CLI for microinit.
 //!
 //! Asks the running PID 1 / supervise daemon for an ordered poweroff / reboot /
-//! halt over `/run/microinit.sock`.
+//! halt over `$DATA_DIR/run/microinit.sock` (default `/data/run/microinit.sock`).
 //!
 //! With the `init` feature (Linux hub builds), falls back to BusyBox
 //! `/sbin/{poweroff,reboot,halt}` if the control socket is unavailable.
@@ -14,12 +14,12 @@ use std::process::ExitCode;
 use std::process::Command;
 
 use microinit::cli::{self, ShutdownCliMode};
-use microinit::config::DEFAULT_SOCKET;
+use microinit::config::{default_socket_path, DEFAULT_SOCKET};
 #[cfg(feature = "init")]
 use microinit::protocol::ShutdownMode;
 
 fn main() -> ExitCode {
-    let mut socket = PathBuf::from(DEFAULT_SOCKET);
+    let mut socket = default_socket_path();
     let mut args: Vec<String> = Vec::new();
     let mut argv = std::env::args().skip(1).peekable();
     while let Some(a) = argv.next() {
