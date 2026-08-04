@@ -15,7 +15,9 @@ pub enum ShutdownCliMode {
 }
 
 /// Parse SysV-compatible shutdown flags (`-h`/`-P`/`-r`/`-H`, `now`, …).
-pub fn parse_shutdown_args(args: &[impl AsRef<str>]) -> std::result::Result<ShutdownCliMode, String> {
+pub fn parse_shutdown_args(
+    args: &[impl AsRef<str>],
+) -> std::result::Result<ShutdownCliMode, String> {
     let mut mode = ShutdownMode::Poweroff;
     let mut seen = false;
 

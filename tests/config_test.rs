@@ -66,10 +66,7 @@ fn resolve_cmd_fallback() {
     };
     assert_eq!(svc.resolve_start().unwrap(), "/etc/init.d/redis start");
     assert_eq!(svc.resolve_stop().unwrap(), "/etc/init.d/redis stop");
-    assert_eq!(
-        svc.resolve_restart().unwrap(),
-        "/etc/init.d/redis restart"
-    );
+    assert_eq!(svc.resolve_restart().unwrap(), "/etc/init.d/redis restart");
 }
 
 #[test]

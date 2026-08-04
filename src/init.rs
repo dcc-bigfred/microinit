@@ -219,7 +219,10 @@ pub fn run(opts: InitOpts) -> Result<()> {
     #[cfg(not(feature = "init"))]
     {
         let _ = opts.spawn_getty;
-        hub.emit_init(LogLevel::Info, "getty disabled (supervise-only / no-init build)");
+        hub.emit_init(
+            LogLevel::Info,
+            "getty disabled (supervise-only / no-init build)",
+        );
     }
 
     let etc_dir = opts

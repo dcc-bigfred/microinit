@@ -5,7 +5,9 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use microinit::cli;
-use microinit::config::{self, default_config_path, DEFAULT_INIT_LOGS_TTY, DEFAULT_LOGS_TTY, DEFAULT_SOCKET};
+use microinit::config::{
+    self, default_config_path, DEFAULT_INIT_LOGS_TTY, DEFAULT_LOGS_TTY, DEFAULT_SOCKET,
+};
 use microinit::init;
 
 #[cfg(feature = "init")]

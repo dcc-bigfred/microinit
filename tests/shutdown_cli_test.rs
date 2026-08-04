@@ -9,7 +9,10 @@ fn parse_shutdown_args_defaults_and_flags() {
         (&[], ShutdownCliMode::Mode(ShutdownMode::Poweroff)),
         (&["now"], ShutdownCliMode::Mode(ShutdownMode::Poweroff)),
         (&["-h"], ShutdownCliMode::Mode(ShutdownMode::Poweroff)),
-        (&["-P", "now"], ShutdownCliMode::Mode(ShutdownMode::Poweroff)),
+        (
+            &["-P", "now"],
+            ShutdownCliMode::Mode(ShutdownMode::Poweroff),
+        ),
         (&["-r"], ShutdownCliMode::Mode(ShutdownMode::Reboot)),
         (&["reboot"], ShutdownCliMode::Mode(ShutdownMode::Reboot)),
         (&["-H"], ShutdownCliMode::Mode(ShutdownMode::Halt)),
