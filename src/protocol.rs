@@ -152,8 +152,7 @@ pub struct ServiceDescribe {
     /// Live process identity from `/proc/<pid>/status` when running.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub running_as: Option<RunningIdentity>,
-    /// Configured security context (definition). Absent on Android builds.
-    #[cfg(not(target_os = "android"))]
+    /// Configured security context (definition).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub security_context: Option<crate::config::SecurityContext>,
     /// Raw source-file object; populated when `Request::Describe.output` is `json`.

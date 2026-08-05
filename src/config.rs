@@ -265,16 +265,23 @@ pub struct ServiceConfig {
     /// Arbitrary key=value labels (e.g. `created-by=bigfred`). Stable order via BTreeMap.
     #[serde(default)]
     pub labels: BTreeMap<String, String>,
-    /// Optional privilege drop / capabilities (Linux only; ignored on Android builds).
-    #[cfg(not(target_os = "android"))]
+    /// Optional privilege drop / capabilities.
+    ///
+    /// Parsed on all platforms. On Android, a non-empty value fails
+    /// [`Config::validate`]. On Linux, [`Config::prepare_security`] resolves it
+    /// into [`Self::resolved_security`].
     #[serde(default)]
     pub security_context: Option<SecurityContext>,
+    /// Cached resolution of [`Self::security_context`] (Linux only; not serialized).
+    #[cfg(not(target_os = "android"))]
+    #[serde(skip)]
+    pub resolved_security: Option<crate::security::ResolvedIdentity>,
 }
 
 /// Per-service privilege drop and Linux capabilities.
 ///
-/// Completely disabled on Android — this type is not compiled into Android builds.
-#[cfg(not(target_os = "android"))]
+/// On Android builds a configured context is rejected at validate time (not
+/// silently ignored). On Linux it is applied at spawn via `security`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct SecurityContext {
@@ -282,9 +289,11 @@ pub struct SecurityContext {
     #[serde(default)]
     pub run_as_user: Option<String>,
     /// Group name or numeric gid; defaults to the user's primary gid when omitted.
+    /// Required when `runAsUser` is a numeric uid with no passwd entry.
     #[serde(default)]
     pub run_as_group: Option<String>,
     /// Linux capability names (`CAP_` prefix optional). See `capabilities(7)`.
+    /// When set, the list is **exclusive** (not additive to the parent's caps).
     #[serde(default)]
     pub capabilities: Vec<String>,
 }
@@ -549,28 +558,38 @@ impl Config {
                 }
             }
             validate_labels(&svc.name, &svc.labels)?;
-            #[cfg(not(target_os = "android"))]
             if let Some(ref sec) = svc.security_context {
-                if let Some(ref u) = sec.run_as_user {
-                    if u.trim().is_empty() {
-                        return Err(Error::Config(format!(
-                            "service '{}': securityContext.runAsUser must not be empty",
-                            svc.name
-                        )));
-                    }
+                #[cfg(target_os = "android")]
+                {
+                    let _ = sec;
+                    return Err(Error::Config(format!(
+                        "service '{}': securityContext is not supported on Android",
+                        svc.name
+                    )));
                 }
-                if let Some(ref g) = sec.run_as_group {
-                    if g.trim().is_empty() {
-                        return Err(Error::Config(format!(
-                            "service '{}': securityContext.runAsGroup must not be empty",
-                            svc.name
-                        )));
+                #[cfg(not(target_os = "android"))]
+                {
+                    if let Some(ref u) = sec.run_as_user {
+                        if u.trim().is_empty() {
+                            return Err(Error::Config(format!(
+                                "service '{}': securityContext.runAsUser must not be empty",
+                                svc.name
+                            )));
+                        }
                     }
-                }
-                for cap in &sec.capabilities {
-                    crate::security::validate_cap_name(cap).map_err(|e| {
-                        Error::Config(format!("service '{}': securityContext.{}", svc.name, e))
-                    })?;
+                    if let Some(ref g) = sec.run_as_group {
+                        if g.trim().is_empty() {
+                            return Err(Error::Config(format!(
+                                "service '{}': securityContext.runAsGroup must not be empty",
+                                svc.name
+                            )));
+                        }
+                    }
+                    for cap in &sec.capabilities {
+                        crate::security::validate_cap_name(cap).map_err(|e| {
+                            Error::Config(format!("service '{}': securityContext.{}", svc.name, e))
+                        })?;
+                    }
                 }
             }
         }
@@ -593,6 +612,21 @@ impl Config {
 
     pub fn get(&self, name: &str) -> Option<&ServiceConfig> {
         self.services.iter().find(|s| s.name == name)
+    }
+
+    /// Resolve each service's `securityContext` into a cached identity (Linux).
+    ///
+    /// Call after [`Self::validate`]. Failures (unknown user, etc.) surface here
+    /// so spawn/liveness never hit NSS on the hot path.
+    #[cfg(not(target_os = "android"))]
+    pub fn prepare_security(&mut self) -> Result<()> {
+        for svc in &mut self.services {
+            svc.resolved_security = match &svc.security_context {
+                Some(ctx) => crate::security::resolve(ctx)?,
+                None => None,
+            };
+        }
+        Ok(())
     }
 }
 
@@ -620,8 +654,10 @@ pub fn save_override(path: &Path, map: &HashMap<String, bool>) -> Result<()> {
 
 pub fn load_config(path: &Path) -> Result<Config> {
     let data = fs::read_to_string(path).map_err(|e| Error::io_at(path, e))?;
-    let cfg: Config = serde_json::from_str(&data)?;
+    let mut cfg: Config = serde_json::from_str(&data)?;
     cfg.validate()?;
+    #[cfg(not(target_os = "android"))]
+    cfg.prepare_security()?;
     Ok(cfg)
 }
 
@@ -738,6 +774,8 @@ pub fn load_or_create_with_dropins(
     let ov = load_override(override_path)?;
     apply_enabled_override(&mut cfg, &ov);
     cfg.validate()?;
+    #[cfg(not(target_os = "android"))]
+    cfg.prepare_security()?;
     Ok(cfg)
 }
 
@@ -783,8 +821,9 @@ pub fn example_config() -> Config {
                     timeout: 5,
                 }),
                 labels: BTreeMap::new(),
-                #[cfg(not(target_os = "android"))]
                 security_context: None,
+                #[cfg(not(target_os = "android"))]
+                resolved_security: None,
             },
             ServiceConfig {
                 name: "redis".into(),
@@ -805,8 +844,9 @@ pub fn example_config() -> Config {
                 cwd: "/".into(),
                 liveness_probe: None,
                 labels: BTreeMap::new(),
-                #[cfg(not(target_os = "android"))]
                 security_context: None,
+                #[cfg(not(target_os = "android"))]
+                resolved_security: None,
             },
             ServiceConfig {
                 name: "remote-icmp".into(),
@@ -830,12 +870,13 @@ pub fn example_config() -> Config {
                 cwd: "/".into(),
                 liveness_probe: None,
                 labels: BTreeMap::new(),
-                #[cfg(not(target_os = "android"))]
                 security_context: Some(SecurityContext {
                     run_as_user: Some("nobody".into()),
                     run_as_group: None,
                     capabilities: vec!["CAP_NET_RAW".into()],
                 }),
+                #[cfg(not(target_os = "android"))]
+                resolved_security: None,
             },
         ],
     }

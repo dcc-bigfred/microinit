@@ -159,17 +159,24 @@ HTTP / TCP examples:
 
 ## Security context
 
-`securityContext` (optional) drops the service to a different user/group and optionally keeps Linux capabilities across `exec`. It applies to **all** command paths (start, stop, restart, liveness `cmd` probe). microinit must run as root (or have `CAP_SETUID`+`CAP_SETGID`) to apply it; otherwise the service fails to start with a clear error. **Disabled on Android** — the field is silently ignored there.
+`securityContext` (optional) drops the service to a different user/group and optionally keeps Linux capabilities across `exec`. It applies to **all** command paths (start, stop, restart, liveness `cmd` probe). microinit must run as root (or have `CAP_SETUID`+`CAP_SETGID` **and** be able to call `setgroups(2)`) to apply an identity drop; otherwise the service **fails to start** with a clear error.
+
+**Not supported on Android** — a configured `securityContext` is rejected at config load (not silently ignored).
 
 | Field | Role |
 |-------|------|
 | `runAsUser` | Login name **or** numeric uid (purely numeric string → uid) |
-| `runAsGroup` | Group name **or** numeric gid; optional — defaults to the user's primary gid |
-| `capabilities` | Linux capability names (`CAP_` prefix optional); kept across `exec` via ambient capabilities |
+| `runAsGroup` | Group name **or** numeric gid; optional when the user has a passwd entry (defaults to primary gid). **Required** for numeric uids with no passwd entry |
+| `capabilities` | Linux capability names (`CAP_` prefix optional). The list is **exclusive** (replaces the parent's capability set; it is not additive) |
 
-Supplementary groups are dropped (`setgroups([])`) for least privilege.
+Supplementary groups are cleared with `setgroups([])` (fail-closed). Environments that deny `setgroups` (e.g. user namespaces with `/proc/self/setgroups=deny`) cannot use `runAsUser`/`runAsGroup`.
 
-Inspect a running service with `microinit describe <name>` — it shows **Running as** (live uid/gid from `/proc`) and **Security** (the configured `securityContext`). Use `microinit describe -o json <name>` to dump the raw service object from its source file (stdout is pure JSON; the path is printed on stderr).
+After the drop, microinit also:
+- shrinks the capability **bounding set** to the requested caps (or empty),
+- sets `PR_SET_NO_NEW_PRIVS` so later `exec` cannot regain privileges via setuid binaries / file caps,
+- sets `HOME` / `USER` / `LOGNAME` from passwd when known (unless overridden in `env`).
+
+Inspect a running service with `microinit describe <name>` — it shows **Running as** (live uid/gid from `/proc`) and **Security** (the configured `securityContext`). Use `microinit describe -o json <name>` to dump the raw service object from its source file (stdout is pure JSON; the path is printed on stderr). Note: `-o json` is the **unmerged** source object; human `describe` shows the **merged** in-memory definition.
 
 ### Run a service as a non-root user
 
@@ -241,7 +248,7 @@ A service that needs to bind port 443 but otherwise runs unprivileged:
 }
 ```
 
-> Note: `capabilities` are granted to the exec'd process and its children via ambient capabilities (Linux 4.3+). On Android `securityContext` is ignored — keep using `setcap`/root there.
+> Note: `capabilities` are granted via ambient capabilities (Linux 4.3+) and are an **exclusive** set. On Android `securityContext` is rejected at config load — keep using `setcap`/root there, or omit the field from Android configs.
 
 ---
 

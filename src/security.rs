@@ -10,51 +10,103 @@ use nix::unistd::{self, Gid, Group, Uid, User};
 use crate::config::SecurityContext;
 use crate::error::{Error, Result};
 
-/// Capability names accepted in `securityContext.capabilities` (without requiring
-/// the `CAP_` prefix). Sourced from `capabilities(7)`.
-pub const KNOWN_CAPABILITIES: &[&str] = &[
-    "AUDIT_CONTROL",
-    "AUDIT_READ",
-    "AUDIT_WRITE",
-    "BLOCK_SUSPEND",
-    "BPF",
-    "CHECKPOINT_RESTORE",
-    "CHOWN",
-    "DAC_OVERRIDE",
-    "DAC_READ_SEARCH",
-    "FOWNER",
-    "FSETID",
-    "IPC_LOCK",
-    "IPC_OWNER",
-    "KILL",
-    "LEASE",
-    "LINUX_IMMUTABLE",
-    "MAC_ADMIN",
-    "MAC_OVERRIDE",
-    "MKNOD",
-    "NET_ADMIN",
-    "NET_BIND_SERVICE",
-    "NET_BROADCAST",
-    "NET_RAW",
-    "PERFMON",
-    "SETFCAP",
-    "SETGID",
-    "SETPCAP",
-    "SETUID",
-    "SYS_ADMIN",
-    "SYS_BOOT",
-    "SYS_CHROOT",
-    "SYSLOG",
-    "SYS_MODULE",
-    "SYS_NICE",
-    "SYS_PACCT",
-    "SYS_PTRACE",
-    "SYS_RAWIO",
-    "SYS_RESOURCE",
-    "SYS_TIME",
-    "SYS_TTY_CONFIG",
-    "WAKE_ALARM",
+/// Allowlisted capability names and their Linux capability numbers
+/// (`linux/capability.h`). Single source of truth for validation and apply.
+const CAP_TABLE: &[(&str, u8)] = &[
+    ("CHOWN", 0),
+    ("DAC_OVERRIDE", 1),
+    ("DAC_READ_SEARCH", 2),
+    ("FOWNER", 3),
+    ("FSETID", 4),
+    ("KILL", 5),
+    ("SETGID", 6),
+    ("SETUID", 7),
+    ("SETPCAP", 8),
+    ("LINUX_IMMUTABLE", 9),
+    ("NET_BIND_SERVICE", 10),
+    ("NET_BROADCAST", 11),
+    ("NET_ADMIN", 12),
+    ("NET_RAW", 13),
+    ("IPC_LOCK", 14),
+    ("IPC_OWNER", 15),
+    ("SYS_MODULE", 16),
+    ("SYS_RAWIO", 17),
+    ("SYS_CHROOT", 18),
+    ("SYS_PTRACE", 19),
+    ("SYS_PACCT", 20),
+    ("SYS_ADMIN", 21),
+    ("SYS_BOOT", 22),
+    ("SYS_NICE", 23),
+    ("SYS_RESOURCE", 24),
+    ("SYS_TIME", 25),
+    ("SYS_TTY_CONFIG", 26),
+    ("MKNOD", 27),
+    ("LEASE", 28),
+    ("AUDIT_WRITE", 29),
+    ("AUDIT_CONTROL", 30),
+    ("SETFCAP", 31),
+    ("MAC_OVERRIDE", 32),
+    ("MAC_ADMIN", 33),
+    ("SYSLOG", 34),
+    ("WAKE_ALARM", 35),
+    ("BLOCK_SUSPEND", 36),
+    ("AUDIT_READ", 37),
+    ("PERFMON", 38),
+    ("BPF", 39),
+    ("CHECKPOINT_RESTORE", 40),
 ];
+
+/// Highest known capability number in [`CAP_TABLE`] (inclusive).
+const CAP_LAST: u8 = 40;
+
+/// Capability names accepted in `securityContext.capabilities` (without requiring
+/// the `CAP_` prefix).
+pub const KNOWN_CAPABILITIES: &[&str] = {
+    // Keep a parallel name list for docs/tests without allocating at runtime.
+    &[
+        "AUDIT_CONTROL",
+        "AUDIT_READ",
+        "AUDIT_WRITE",
+        "BLOCK_SUSPEND",
+        "BPF",
+        "CHECKPOINT_RESTORE",
+        "CHOWN",
+        "DAC_OVERRIDE",
+        "DAC_READ_SEARCH",
+        "FOWNER",
+        "FSETID",
+        "IPC_LOCK",
+        "IPC_OWNER",
+        "KILL",
+        "LEASE",
+        "LINUX_IMMUTABLE",
+        "MAC_ADMIN",
+        "MAC_OVERRIDE",
+        "MKNOD",
+        "NET_ADMIN",
+        "NET_BIND_SERVICE",
+        "NET_BROADCAST",
+        "NET_RAW",
+        "PERFMON",
+        "SETFCAP",
+        "SETGID",
+        "SETPCAP",
+        "SETUID",
+        "SYS_ADMIN",
+        "SYS_BOOT",
+        "SYS_CHROOT",
+        "SYSLOG",
+        "SYS_MODULE",
+        "SYS_NICE",
+        "SYS_PACCT",
+        "SYS_PTRACE",
+        "SYS_RAWIO",
+        "SYS_RESOURCE",
+        "SYS_TIME",
+        "SYS_TTY_CONFIG",
+        "WAKE_ALARM",
+    ]
+};
 
 /// Normalize a capability name: strip optional `CAP_` prefix, uppercase.
 #[must_use]
@@ -73,75 +125,34 @@ pub fn validate_cap_name(raw: &str) -> Result<()> {
     if n.is_empty() {
         return Err(Error::Config("empty capability name".into()));
     }
-    if !KNOWN_CAPABILITIES.iter().any(|k| *k == n) {
+    if !CAP_TABLE.iter().any(|(name, _)| *name == n) {
         return Err(Error::Config(format!("unknown capability '{raw}'")));
     }
     Ok(())
 }
 
-/// Map a normalized capability name to its Linux capability number.
 fn cap_number(normalized: &str) -> Result<u8> {
-    // Values match linux/capability.h (stable ABI).
-    let n = match normalized {
-        "CHOWN" => 0,
-        "DAC_OVERRIDE" => 1,
-        "DAC_READ_SEARCH" => 2,
-        "FOWNER" => 3,
-        "FSETID" => 4,
-        "KILL" => 5,
-        "SETGID" => 6,
-        "SETUID" => 7,
-        "SETPCAP" => 8,
-        "LINUX_IMMUTABLE" => 9,
-        "NET_BIND_SERVICE" => 10,
-        "NET_BROADCAST" => 11,
-        "NET_ADMIN" => 12,
-        "NET_RAW" => 13,
-        "IPC_LOCK" => 14,
-        "IPC_OWNER" => 15,
-        "SYS_MODULE" => 16,
-        "SYS_RAWIO" => 17,
-        "SYS_CHROOT" => 18,
-        "SYS_PTRACE" => 19,
-        "SYS_PACCT" => 20,
-        "SYS_ADMIN" => 21,
-        "SYS_BOOT" => 22,
-        "SYS_NICE" => 23,
-        "SYS_RESOURCE" => 24,
-        "SYS_TIME" => 25,
-        "SYS_TTY_CONFIG" => 26,
-        "MKNOD" => 27,
-        "LEASE" => 28,
-        "AUDIT_WRITE" => 29,
-        "AUDIT_CONTROL" => 30,
-        "SETFCAP" => 31,
-        "MAC_OVERRIDE" => 32,
-        "MAC_ADMIN" => 33,
-        "SYSLOG" => 34,
-        "WAKE_ALARM" => 35,
-        "BLOCK_SUSPEND" => 36,
-        "AUDIT_READ" => 37,
-        "PERFMON" => 38,
-        "BPF" => 39,
-        "CHECKPOINT_RESTORE" => 40,
-        _ => {
-            return Err(Error::Security(format!(
-                "unknown capability '{normalized}'"
-            )));
-        }
-    };
-    Ok(n)
+    CAP_TABLE
+        .iter()
+        .find(|(name, _)| *name == normalized)
+        .map(|(_, n)| *n)
+        .ok_or_else(|| Error::Security(format!("unknown capability '{normalized}'")))
 }
 
 /// Resolved identity ready for `pre_exec` application.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedIdentity {
     /// Target uid; `None` means leave uid unchanged.
     pub uid: Option<u32>,
     /// Target gid; `None` means leave gid unchanged.
     pub gid: Option<u32>,
     /// Capability numbers to keep as ambient/inheritable/permitted/effective.
+    /// Empty means clear all capabilities after the identity change.
     pub caps: Vec<u8>,
+    /// Suggested `HOME` from passwd (best-effort).
+    pub home: Option<String>,
+    /// Suggested `USER` / `LOGNAME` from passwd (best-effort).
+    pub username: Option<String>,
 }
 
 impl ResolvedIdentity {
@@ -149,12 +160,17 @@ impl ResolvedIdentity {
     pub fn is_noop(&self) -> bool {
         self.uid.is_none() && self.gid.is_none() && self.caps.is_empty()
     }
+
+    #[must_use]
+    pub fn drops_identity(&self) -> bool {
+        self.uid.is_some() || self.gid.is_some()
+    }
 }
 
 /// Resolve `SecurityContext` into a concrete identity.
 ///
 /// Returns `Ok(None)` when the context is empty (no user/group/caps).
-/// User/group lookup failures are spawn-time errors (`Error::Security`).
+/// User/group lookup failures are spawn-time / prepare-time errors (`Error::Security`).
 pub fn resolve(ctx: &SecurityContext) -> Result<Option<ResolvedIdentity>> {
     let has_user = ctx
         .run_as_user
@@ -170,6 +186,8 @@ pub fn resolve(ctx: &SecurityContext) -> Result<Option<ResolvedIdentity>> {
 
     let mut uid: Option<u32> = None;
     let mut primary_gid: Option<u32> = None;
+    let mut home: Option<String> = None;
+    let mut username: Option<String> = None;
 
     if let Some(ref user_spec) = ctx.run_as_user {
         let spec = user_spec.trim();
@@ -180,6 +198,12 @@ pub fn resolve(ctx: &SecurityContext) -> Result<Option<ResolvedIdentity>> {
             uid = Some(n);
             if let Ok(Some(u)) = User::from_uid(Uid::from_raw(n)) {
                 primary_gid = Some(u.gid.as_raw());
+                home = Some(u.dir.display().to_string());
+                username = Some(u.name);
+            } else if !has_group {
+                return Err(Error::Security(format!(
+                    "runAsUser '{spec}' has no passwd entry; set runAsGroup explicitly"
+                )));
             }
         } else {
             let u = User::from_name(spec)
@@ -187,6 +211,8 @@ pub fn resolve(ctx: &SecurityContext) -> Result<Option<ResolvedIdentity>> {
                 .ok_or_else(|| Error::Security(format!("unknown user '{spec}'")))?;
             uid = Some(u.uid.as_raw());
             primary_gid = Some(u.gid.as_raw());
+            home = Some(u.dir.display().to_string());
+            username = Some(u.name);
         }
     }
 
@@ -212,8 +238,16 @@ pub fn resolve(ctx: &SecurityContext) -> Result<Option<ResolvedIdentity>> {
         let n = normalize_cap_name(raw);
         caps.push(cap_number(&n)?);
     }
+    caps.sort_unstable();
+    caps.dedup();
 
-    let ident = ResolvedIdentity { uid, gid, caps };
+    let ident = ResolvedIdentity {
+        uid,
+        gid,
+        caps,
+        home,
+        username,
+    };
     if ident.is_noop() {
         Ok(None)
     } else {
@@ -223,20 +257,21 @@ pub fn resolve(ctx: &SecurityContext) -> Result<Option<ResolvedIdentity>> {
 
 /// Apply identity in the child after fork, before exec.
 ///
-/// Order: keepcaps → setgroups([]) → setgid → setuid → capset + ambient.
+/// Order: keepcaps → bounding-set drop → setgroups([]) → setgid → setuid →
+/// capset + ambient → `PR_SET_NO_NEW_PRIVS`.
 ///
 /// # Safety
 ///
 /// Must only be called from a `Command::pre_exec` closure (single-threaded
-/// child between fork and exec). Syscalls are async-signal-safe enough for
-/// this context; we intentionally do not allocate after the first libc call
-/// beyond the small stack buffers used by `capset`.
+/// child between fork and exec). Success path avoids heap allocation after the
+/// first syscall; error paths may allocate for diagnostics.
 pub fn apply_pre_exec(ident: &ResolvedIdentity) -> Result<()> {
     if ident.is_noop() {
         return Ok(());
     }
 
     let want_caps = !ident.caps.is_empty();
+    let drop_id = ident.drops_identity();
 
     // SAFETY: PR_SET_KEEPCAPS is a well-defined prctl; failure is reported.
     if want_caps {
@@ -249,15 +284,18 @@ pub fn apply_pre_exec(ident: &ResolvedIdentity) -> Result<()> {
         }
     }
 
-    // Drop supplementary groups for least privilege. Requires root / CAP_SETGID
-    // and a writable `/proc/self/setgroups` (user namespaces often set "deny",
-    // which yields EINVAL — treat that as best-effort and continue).
-    if (ident.uid.is_some() || ident.gid.is_some()) && unistd::geteuid().is_root() {
-        if let Err(e) = unistd::setgroups(&[]) {
-            if !matches!(e, nix::errno::Errno::EPERM | nix::errno::Errno::EINVAL) {
-                return Err(Error::Security(format!("setgroups: {e}")));
-            }
-        }
+    // Shrink the capability bounding set while still privileged.
+    drop_bounding_set(&ident.caps)?;
+
+    // Fail-closed: when dropping uid/gid we must clear supplementary groups.
+    // User namespaces with `/proc/self/setgroups=deny` are unsupported for
+    // securityContext identity drops.
+    if drop_id {
+        unistd::setgroups(&[]).map_err(|e| {
+            Error::Security(format!(
+                "setgroups: {e} (required when runAsUser/runAsGroup is set)"
+            ))
+        })?;
     }
 
     if let Some(gid) = ident.gid {
@@ -270,8 +308,20 @@ pub fn apply_pre_exec(ident: &ResolvedIdentity) -> Result<()> {
             .map_err(|e| Error::Security(format!("setuid({uid}): {e}")))?;
     }
 
-    if want_caps {
+    // Always install an explicit capability set after identity change:
+    // requested caps, or empty (clear everything) when dropping identity.
+    if want_caps || drop_id {
         set_capabilities(&ident.caps)?;
+    }
+
+    // SAFETY: PR_SET_NO_NEW_PRIVS blocks future privilege gains via execve
+    // (setuid binaries / file capabilities).
+    let rc = unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1i64, 0, 0, 0) };
+    if rc != 0 {
+        return Err(Error::Security(format!(
+            "PR_SET_NO_NEW_PRIVS: {}",
+            std::io::Error::last_os_error()
+        )));
     }
 
     Ok(())
@@ -288,6 +338,19 @@ pub fn attach_pre_exec(cmd: &mut std::process::Command, ident: &ResolvedIdentity
             apply_pre_exec(&owned).map_err(|e| std::io::Error::other(e.to_string()))
         });
     }
+}
+
+fn drop_bounding_set(keep: &[u8]) -> Result<()> {
+    for cap in 0..=CAP_LAST {
+        if keep.contains(&cap) {
+            continue;
+        }
+        // SAFETY: PR_CAPBSET_DROP removes `cap` from the bounding set.
+        // Best-effort: some containers lack CAP_SETPCAP or reject drops with
+        // EINVAL/EPERM; identity drop and capset below remain authoritative.
+        let _ = unsafe { libc::prctl(libc::PR_CAPBSET_DROP, cap as libc::c_ulong, 0, 0, 0) };
+    }
+    Ok(())
 }
 
 // Linux capability ABI (capability.h) — not always exported by the `libc` crate.
@@ -312,7 +375,6 @@ unsafe extern "C" {
 }
 
 fn set_capabilities(caps: &[u8]) -> Result<()> {
-    // Build a 64-bit mask (capability version 3 uses two u32 words).
     let mut low: u32 = 0;
     let mut high: u32 = 0;
     for &c in caps {
@@ -353,7 +415,6 @@ fn set_capabilities(caps: &[u8]) -> Result<()> {
         )));
     }
 
-    // Clear ambient set, then raise each requested capability.
     // SAFETY: PR_CAP_AMBIENT_* are documented prctl operations.
     let rc = unsafe {
         libc::prctl(
@@ -416,6 +477,22 @@ mod tests {
     }
 
     #[test]
+    fn cap_table_covers_known_list() {
+        for name in KNOWN_CAPABILITIES {
+            assert!(
+                CAP_TABLE.iter().any(|(n, _)| n == name),
+                "{name} missing from CAP_TABLE"
+            );
+        }
+        for (name, _) in CAP_TABLE {
+            assert!(
+                KNOWN_CAPABILITIES.contains(name),
+                "{name} missing from KNOWN_CAPABILITIES"
+            );
+        }
+    }
+
+    #[test]
     fn resolve_empty_is_none() {
         let ctx = SecurityContext::default();
         assert!(resolve(&ctx).unwrap().is_none());
@@ -431,5 +508,32 @@ mod tests {
         let ident = resolve(&ctx).unwrap().unwrap();
         assert_eq!(ident.uid, Some(0));
         assert_eq!(ident.gid, Some(0));
+    }
+
+    #[test]
+    fn resolve_numeric_uid_without_passwd_requires_group() {
+        // Extremely unlikely to exist in passwd; still require explicit group.
+        let ctx = SecurityContext {
+            run_as_user: Some("4294967294".into()), // -2 as u32 often unused
+            run_as_group: None,
+            capabilities: vec![],
+        };
+        // May succeed if passwd has the entry; if not, must error about runAsGroup.
+        match resolve(&ctx) {
+            Ok(Some(ident)) => {
+                assert!(
+                    ident.gid.is_some(),
+                    "passwd entry should supply primary gid"
+                );
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                assert!(
+                    msg.contains("runAsGroup") || msg.contains("passwd"),
+                    "{msg}"
+                );
+            }
+            Ok(None) => panic!("expected identity or error"),
+        }
     }
 }

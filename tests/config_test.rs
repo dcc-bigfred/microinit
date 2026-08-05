@@ -26,8 +26,9 @@ fn minimal_svc(name: &str) -> ServiceConfig {
         cwd: "/".into(),
         liveness_probe: None,
         labels: BTreeMap::new(),
-        #[cfg(not(target_os = "android"))]
         security_context: None,
+        #[cfg(not(target_os = "android"))]
+        resolved_security: None,
     }
 }
 
@@ -67,8 +68,9 @@ fn resolve_cmd_fallback() {
         cwd: "/".into(),
         liveness_probe: None,
         labels: BTreeMap::new(),
-        #[cfg(not(target_os = "android"))]
         security_context: None,
+        #[cfg(not(target_os = "android"))]
+        resolved_security: None,
     };
     assert_eq!(svc.resolve_start().unwrap(), "/etc/init.d/redis start");
     assert_eq!(svc.resolve_stop().unwrap(), "/etc/init.d/redis stop");
@@ -96,8 +98,9 @@ fn resolve_explicit_cmds_prefer_over_cmd() {
         cwd: "/".into(),
         liveness_probe: None,
         labels: BTreeMap::new(),
-        #[cfg(not(target_os = "android"))]
         security_context: None,
+        #[cfg(not(target_os = "android"))]
+        resolved_security: None,
     };
     assert_eq!(svc.resolve_start().unwrap(), "start-me");
     assert_eq!(svc.resolve_stop().unwrap(), "stop-me");
@@ -125,8 +128,9 @@ fn resolve_restart_falls_back_to_stop_and_start() {
         cwd: "/".into(),
         liveness_probe: None,
         labels: BTreeMap::new(),
-        #[cfg(not(target_os = "android"))]
         security_context: None,
+        #[cfg(not(target_os = "android"))]
+        resolved_security: None,
     };
     assert_eq!(svc.resolve_restart().unwrap(), "do-stop && do-start");
 }
@@ -152,8 +156,9 @@ fn resolve_start_errors_without_cmds() {
         cwd: "/".into(),
         liveness_probe: None,
         labels: BTreeMap::new(),
-        #[cfg(not(target_os = "android"))]
         security_context: None,
+        #[cfg(not(target_os = "android"))]
+        resolved_security: None,
     };
     assert!(svc.resolve_start().is_err());
     assert!(svc.resolve_stop().is_err());

@@ -98,7 +98,6 @@ fn request_response_serde_roundtrip() {
                 detail: None,
             }],
             running_as: None,
-            #[cfg(not(target_os = "android"))]
             security_context: None,
             source: None,
         }),
@@ -176,7 +175,6 @@ fn describe_event_kinds_serde_roundtrip() {
             dep_edges: vec![],
             events: events.clone(),
             running_as: None,
-            #[cfg(not(target_os = "android"))]
             security_context: None,
             source: None,
         }),

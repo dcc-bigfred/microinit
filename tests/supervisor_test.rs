@@ -45,8 +45,9 @@ fn job(name: &str, start: &str, deps: &[&str], enabled: bool) -> ServiceConfig {
         cwd: "/".into(),
         liveness_probe: None,
         labels: BTreeMap::new(),
-        #[cfg(not(target_os = "android"))]
         security_context: None,
+        #[cfg(not(target_os = "android"))]
+        resolved_security: None,
     }
 }
 
@@ -70,8 +71,9 @@ fn daemon_cfg(name: &str, start: &str) -> ServiceConfig {
         cwd: "/".into(),
         liveness_probe: None,
         labels: BTreeMap::new(),
-        #[cfg(not(target_os = "android"))]
         security_context: None,
+        #[cfg(not(target_os = "android"))]
+        resolved_security: None,
     }
 }
 

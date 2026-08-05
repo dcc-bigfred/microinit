@@ -52,14 +52,36 @@ fn build_shell_command(
 
     #[cfg(not(target_os = "android"))]
     if let Some(ident) = ident {
+        // Passwd-derived identity env unless the service overrides them.
+        if let Some(ref home) = ident.home {
+            if !cfg.env.contains_key("HOME") && !env_extra.contains_key("HOME") {
+                c.env("HOME", home);
+            }
+        }
+        if let Some(ref user) = ident.username {
+            if !cfg.env.contains_key("USER") && !env_extra.contains_key("USER") {
+                c.env("USER", user);
+            }
+            if !cfg.env.contains_key("LOGNAME") && !env_extra.contains_key("LOGNAME") {
+                c.env("LOGNAME", user);
+            }
+        }
         crate::security::attach_pre_exec(&mut c, ident);
     }
 
     c
 }
 
+/// Prefer the identity cached by [`Config::prepare_security`]; fall back to a
+/// one-shot resolve for ad-hoc test configs that skip prepare.
 #[cfg(not(target_os = "android"))]
 fn resolve_sec(cfg: &ServiceConfig) -> Result<Option<crate::security::ResolvedIdentity>> {
+    if cfg.security_context.is_none() {
+        return Ok(None);
+    }
+    if let Some(ref cached) = cfg.resolved_security {
+        return Ok(Some(cached.clone()));
+    }
     match &cfg.security_context {
         Some(ctx) => crate::security::resolve(ctx),
         None => Ok(None),

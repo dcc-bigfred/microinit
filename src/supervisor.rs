@@ -383,7 +383,7 @@ impl Supervisor {
         use crate::service::read_running_identity;
 
         // --- Snapshot under runtimes (released before config / graph work) ---
-        let (mut status, uptime_secs, events, states, running_as) = {
+        let (mut status, uptime_secs, events, states, pid) = {
             let map = mutex_lock(&self.shared.runtimes);
             let rt = map
                 .get(name)
@@ -406,7 +406,7 @@ impl Supervisor {
                 None
             };
 
-            let running_as = rt.pid.and_then(read_running_identity);
+            let pid = rt.pid;
 
             let start = rt.events.len().saturating_sub(EVENT_RETURN);
             let events: Vec<ServiceEvent> = rt
@@ -418,11 +418,13 @@ impl Supervisor {
 
             let states: HashMap<String, ServiceState> =
                 map.iter().map(|(n, r)| (n.clone(), r.state)).collect();
-            (status, uptime_secs, events, states, running_as)
+            (status, uptime_secs, events, states, pid)
         };
 
+        // Procfs / NSS outside the runtimes lock.
+        let running_as = pid.and_then(read_running_identity);
+
         // --- Snapshot dependency edges under config ---
-        #[cfg(not(target_os = "android"))]
         let security_context;
         let (depends_on_names, services_deps) = {
             let cfg = mutex_lock(&self.config);
@@ -432,10 +434,7 @@ impl Supervisor {
                 .find(|s| s.name == name)
                 .ok_or_else(|| Error::UnknownService(name.to_string()))?;
             status.labels = svc.labels.clone();
-            #[cfg(not(target_os = "android"))]
-            {
-                security_context = svc.security_context.clone();
-            }
+            security_context = svc.security_context.clone();
             let depends_on_names = svc.depends_on.clone();
             let services_deps: Vec<(String, Vec<String>)> = cfg
                 .services
@@ -537,7 +536,6 @@ impl Supervisor {
             dep_edges,
             events,
             running_as,
-            #[cfg(not(target_os = "android"))]
             security_context,
             source,
         })
@@ -1252,12 +1250,18 @@ impl Supervisor {
     }
 }
 
-/// Compare service definitions ignoring `enabled` (handled separately on reload).
+/// Compare service definitions ignoring `enabled` (handled separately on reload)
+/// and cached `resolved_security` (derived from `securityContext`).
 fn definition_eq(a: &ServiceConfig, b: &ServiceConfig) -> bool {
     let mut x = a.clone();
     let mut y = b.clone();
     x.enabled = true;
     y.enabled = true;
+    #[cfg(not(target_os = "android"))]
+    {
+        x.resolved_security = None;
+        y.resolved_security = None;
+    }
     x == y
 }
 

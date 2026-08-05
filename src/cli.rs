@@ -163,7 +163,6 @@ fn print_describe(d: &ServiceDescribe) {
     println!("State:   {}", s.state);
     println!("PID:     {pid}");
     println!("Running as: {}", format_running_as(d.running_as.as_ref()));
-    #[cfg(not(target_os = "android"))]
     println!(
         "Security:  {}",
         format_security_context(d.security_context.as_ref())
@@ -215,7 +214,6 @@ fn format_running_as(id: Option<&crate::protocol::RunningIdentity>) -> String {
     format!("{user}({}) / {group}({})", id.uid, id.gid)
 }
 
-#[cfg(not(target_os = "android"))]
 fn format_security_context(sec: Option<&crate::config::SecurityContext>) -> String {
     let Some(sec) = sec else {
         return "(none)".into();

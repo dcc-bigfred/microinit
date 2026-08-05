@@ -21,7 +21,7 @@ type ServiceDef struct {
 }
 
 // SecurityContext drops privileges and optionally keeps Linux capabilities.
-// Ignored by Android microinit builds.
+// On Android microinit rejects a configured securityContext at load time.
 type SecurityContext struct {
 	RunAsUser    string   `json:"runAsUser,omitempty"`
 	RunAsGroup   string   `json:"runAsGroup,omitempty"`
