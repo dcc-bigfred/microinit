@@ -90,6 +90,7 @@ fn serve_list_roundtrip() {
                     stream,
                     &Response::Error {
                         message: "no".into(),
+                        code: None,
                     },
                 )?,
             }

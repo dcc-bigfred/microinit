@@ -116,7 +116,7 @@ pub fn cmd_list(socket: &Path, show_labels: bool, selectors: &[String]) -> Resul
             }
             Ok(())
         }
-        Response::Error { message } => Err(Error::Ipc(message)),
+        Response::Error { message, .. } => Err(Error::Ipc(message)),
         other => Err(Error::Ipc(format!("unexpected response: {other:?}"))),
     }
 }
@@ -127,7 +127,7 @@ pub fn cmd_describe(socket: &Path, name: &str) -> Result<()> {
             print_describe(&describe);
             Ok(())
         }
-        Response::Error { message } => Err(Error::Ipc(message)),
+        Response::Error { message, .. } => Err(Error::Ipc(message)),
         other => Err(Error::Ipc(format!("unexpected response: {other:?}"))),
     }
 }
@@ -341,7 +341,7 @@ pub fn cmd_start(socket: &Path, name: &str, force: bool) -> Result<()> {
             }
             Ok(())
         }
-        Response::Error { message } => Err(Error::Ipc(message)),
+        Response::Error { message, .. } => Err(Error::Ipc(message)),
         other => Err(Error::Ipc(format!("unexpected response: {other:?}"))),
     }
 }
@@ -400,7 +400,7 @@ pub fn cmd_logs(
                 out.flush()?;
             }
             Response::Ok { .. } => break,
-            Response::Error { message } => return Err(Error::Ipc(message)),
+            Response::Error { message, .. } => return Err(Error::Ipc(message)),
             other => return Err(Error::Ipc(format!("unexpected: {other:?}"))),
         }
     }
@@ -415,7 +415,7 @@ fn simple_ok(socket: &Path, req: Request) -> Result<()> {
             }
             Ok(())
         }
-        Response::Error { message } => Err(Error::Ipc(message)),
+        Response::Error { message, .. } => Err(Error::Ipc(message)),
         other => Err(Error::Ipc(format!("unexpected response: {other:?}"))),
     }
 }

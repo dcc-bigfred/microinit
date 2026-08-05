@@ -227,6 +227,11 @@ pub enum Response {
     },
     Error {
         message: String,
+        /// Stable machine-readable code (e.g. "not_found", "disabled").
+        /// Absent for errors without a canonical code; clients fall back to
+        /// substring-matching `message` for backward compatibility.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        code: Option<String>,
     },
     List {
         services: Vec<ServiceStatus>,
