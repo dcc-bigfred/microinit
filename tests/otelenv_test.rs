@@ -4,9 +4,7 @@ use serial_test::serial;
 
 #[test]
 fn parse_skips_comments() {
-    let m = otelenv::parse(
-        "# c\nENABLE_TELEMETRY=true\n\nOTEL_SERVICE_NAME=\"microinit\"\nbad\n",
-    );
+    let m = otelenv::parse("# c\nENABLE_TELEMETRY=true\n\nOTEL_SERVICE_NAME=\"microinit\"\nbad\n");
     assert_eq!(m.get("ENABLE_TELEMETRY").map(String::as_str), Some("true"));
     assert_eq!(
         m.get("OTEL_SERVICE_NAME").map(String::as_str),
@@ -51,7 +49,10 @@ fn overlay_enable_and_interval() {
 #[test]
 #[serial]
 fn parse_headers_pairs() {
-    std::env::set_var("OTEL_EXPORTER_OTLP_HEADERS", "Authorization=Bearer x, X-Scope=a");
+    std::env::set_var(
+        "OTEL_EXPORTER_OTLP_HEADERS",
+        "Authorization=Bearer x, X-Scope=a",
+    );
     let cfg = otelenv::overlay_config(OpenTelemetryConfig::default());
     assert_eq!(
         cfg.headers.get("Authorization").map(String::as_str),

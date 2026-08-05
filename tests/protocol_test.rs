@@ -63,7 +63,8 @@ fn request_response_serde_roundtrip() {
         "otel_protocol": "http",
         "otel_service_name": "microinit",
         "otel_export_interval_secs": 15,
-    })).unwrap();
+    }))
+    .unwrap();
     let info = Response::Info {
         info: Box::new(info_payload),
     };

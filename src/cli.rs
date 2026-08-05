@@ -73,9 +73,11 @@ pub fn cmd_info(socket: &Path, json: bool) -> Result<()> {
     match request(socket, &Request::Info)? {
         Response::Info { info } => {
             if json {
-                println!("{}", serde_json::to_string_pretty(&info).map_err(|e| {
-                    Error::Ipc(format!("serialize info: {e}"))
-                })?);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&info)
+                        .map_err(|e| { Error::Ipc(format!("serialize info: {e}")) })?
+                );
             } else {
                 print_daemon_info(&info);
             }
@@ -90,7 +92,10 @@ fn print_daemon_info(info: &DaemonInfo) {
     let commit = short_commit(&info.tag_commit);
     let build = short_commit(&info.build_commit);
     println!("Version:     {}", info.version);
-    println!("Tag commit:  {}", if commit.is_empty() { "-" } else { &commit });
+    println!(
+        "Tag commit:  {}",
+        if commit.is_empty() { "-" } else { &commit }
+    );
     print!("Build:       {build}");
     if !info.build_time.is_empty() {
         print!(" {}", info.build_time);

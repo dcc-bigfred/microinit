@@ -83,9 +83,7 @@ fn read_file_map() -> HashMap<String, String> {
     let path = default_path();
     let mtime = fs::metadata(&path).ok().and_then(|m| m.modified().ok());
 
-    let mut cache = FILE_CACHE
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
+    let mut cache = FILE_CACHE.lock().unwrap_or_else(|e| e.into_inner());
     if cache.mtime == mtime {
         return cache.data.clone();
     }
@@ -207,4 +205,3 @@ fn parse_headers(raw: &str) -> HashMap<String, String> {
     }
     out
 }
-
