@@ -359,6 +359,15 @@ fn handle_ipc(
                 },
             )?,
         },
+        Request::Describe { name } => match supervisor.describe(&name) {
+            Ok(describe) => write_frame(stream, &Response::Describe { describe })?,
+            Err(e) => write_frame(
+                stream,
+                &Response::Error {
+                    message: e.to_string(),
+                },
+            )?,
+        },
         Request::Start { name, force } => {
             respond_start(stream, supervisor.start_service(&name, force))?;
         }
