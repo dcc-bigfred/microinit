@@ -194,8 +194,17 @@ pub fn run(opts: InitOpts) -> Result<()> {
     let socket_path = cfg.socket.clone();
     let lines_default = cfg.logs.lines;
     let override_path = opts.paths.override_file.clone();
+    let config_path = opts.paths.config.clone();
+    let dropins_dir = opts.paths.dropins_dir.clone();
 
-    let supervisor = Supervisor::new(cfg, hub.clone(), console.clone(), override_path);
+    let supervisor = Supervisor::new(
+        cfg,
+        hub.clone(),
+        console.clone(),
+        override_path,
+        config_path,
+        dropins_dir,
+    );
 
     let sup = Arc::clone(&supervisor);
     let hub_ipc = hub.clone();
@@ -390,8 +399,13 @@ fn handle_ipc(
             Ok(status) => write_frame(stream, &Response::Status { status })?,
             Err(e) => write_frame(stream, &error_response(&e))?,
         },
-        Request::Describe { name } => match supervisor.describe(&name) {
-            Ok(describe) => write_frame(stream, &Response::Describe { describe })?,
+        Request::Describe { name, output } => match supervisor.describe(&name, output) {
+            Ok(describe) => write_frame(
+                stream,
+                &Response::Describe {
+                    describe: Box::new(describe),
+                },
+            )?,
             Err(e) => write_frame(stream, &error_response(&e))?,
         },
         Request::Start { name, force } => {

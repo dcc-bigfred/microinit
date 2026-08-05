@@ -178,6 +178,32 @@ or
 microinit probes every
 .Cm interval
 seconds; failure re-runs start.
+.It Cm securityContext
+Optional object
+.Pq Linux only; ignored on Android .
+Drops the service to another user/group and optionally keeps Linux capabilities
+across
+.Xr exec 3 .
+.Bl -tag -width capabilities
+.It Cm runAsUser
+Login name or numeric uid
+.It Cm runAsGroup
+Group name or numeric gid
+.Pq defaults to the user's primary gid
+.It Cm capabilities
+List of capability names from
+.Xr capabilities 7
+.Pq optional Cm CAP_
+prefix .
+Retained via ambient capabilities after
+.Xr setuid 2 .
+.El
+microinit must be root
+.Pq or hold Cm CAP_SETUID / Cm CAP_SETGID
+to apply this; otherwise start fails.
+.Cm describe
+prints the configured context and the live process identity from
+.Pa /proc .
 .El
 .Sh EXAMPLES
 See
@@ -185,4 +211,5 @@ See
 written on first boot.
 .Sh SEE ALSO
 .Xr microinit 8 ,
-.Xr microinit.services.enabled-override.json 5
+.Xr microinit.services.enabled-override.json 5 ,
+.Xr capabilities 7

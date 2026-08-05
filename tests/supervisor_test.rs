@@ -45,6 +45,8 @@ fn job(name: &str, start: &str, deps: &[&str], enabled: bool) -> ServiceConfig {
         cwd: "/".into(),
         liveness_probe: None,
         labels: BTreeMap::new(),
+        #[cfg(not(target_os = "android"))]
+        security_context: None,
     }
 }
 
@@ -68,6 +70,8 @@ fn daemon_cfg(name: &str, start: &str) -> ServiceConfig {
         cwd: "/".into(),
         liveness_probe: None,
         labels: BTreeMap::new(),
+        #[cfg(not(target_os = "android"))]
+        security_context: None,
     }
 }
 
@@ -98,7 +102,17 @@ fn make_sup(services: Vec<ServiceConfig>) -> (Arc<Supervisor>, std::path::PathBu
     };
     let hub = Arc::new(LogHub::new(50, None, None, None));
     let console = Arc::new(Console::from_writer(Box::new(Sink::default())));
-    let sup = Supervisor::new(cfg, hub, console, override_path.clone());
+    let config_path = dir.join("microinit.json");
+    let dropins = dir.join("dropins");
+    let _ = std::fs::create_dir_all(&dropins);
+    let sup = Supervisor::new(
+        cfg,
+        hub,
+        console,
+        override_path.clone(),
+        config_path,
+        dropins,
+    );
     (sup, dir)
 }
 
@@ -182,7 +196,7 @@ fn unknown_service_errors() {
     sup.boot().unwrap();
     assert!(matches!(sup.status("nope"), Err(Error::UnknownService(_))));
     assert!(matches!(
-        sup.describe("nope"),
+        sup.describe("nope", microinit::protocol::DescribeOutput::Human),
         Err(Error::UnknownService(_))
     ));
     assert!(matches!(
@@ -392,7 +406,9 @@ fn liveness_probe_restarts_oneshot_on_failure() {
     );
     assert_eq!(sup.status("net").unwrap().state, ServiceState::Succeeded);
 
-    let desc = sup.describe("net").unwrap();
+    let desc = sup
+        .describe("net", microinit::protocol::DescribeOutput::Human)
+        .unwrap();
     assert!(
         desc.events
             .iter()
@@ -427,7 +443,9 @@ fn describe_deps_and_reverse_deps() {
     ]);
     sup.boot().unwrap();
 
-    let mid = sup.describe("b").unwrap();
+    let mid = sup
+        .describe("b", microinit::protocol::DescribeOutput::Human)
+        .unwrap();
     assert_eq!(mid.depends_on.len(), 1);
     assert_eq!(mid.depends_on[0].name, "a");
     assert_eq!(mid.dependents.len(), 1);
@@ -440,7 +458,9 @@ fn describe_deps_and_reverse_deps() {
     assert!(mid.dep_edges.contains(&("a".into(), "b".into())));
     assert!(mid.dep_edges.contains(&("b".into(), "c".into())));
 
-    let leaf = sup.describe("c").unwrap();
+    let leaf = sup
+        .describe("c", microinit::protocol::DescribeOutput::Human)
+        .unwrap();
     assert_eq!(leaf.depends_on[0].name, "b");
     assert!(leaf.dependents.is_empty());
     assert!(leaf.dep_edges.contains(&("a".into(), "b".into())));
@@ -466,7 +486,9 @@ fn describe_enable_disable_records_state_change() {
     sup.set_enabled("svc", false).unwrap();
     thread::sleep(Duration::from_millis(200));
 
-    let desc = sup.describe("svc").unwrap();
+    let desc = sup
+        .describe("svc", microinit::protocol::DescribeOutput::Human)
+        .unwrap();
     assert!(
         desc.events.iter().any(|e| {
             e.kind == microinit::protocol::ServiceEventKind::StateChange
@@ -494,7 +516,9 @@ fn describe_event_ring_returns_at_most_event_return() {
     }
     thread::sleep(Duration::from_millis(100));
 
-    let desc = sup.describe("svc").unwrap();
+    let desc = sup
+        .describe("svc", microinit::protocol::DescribeOutput::Human)
+        .unwrap();
     assert_eq!(
         desc.events.len(),
         microinit::constants::EVENT_RETURN,
@@ -522,7 +546,9 @@ fn describe_deps_lists_are_sorted() {
     ]);
     sup.boot().unwrap();
 
-    let mid = sup.describe("m").unwrap();
+    let mid = sup
+        .describe("m", microinit::protocol::DescribeOutput::Human)
+        .unwrap();
     let dep_names: Vec<_> = mid.depends_on.iter().map(|n| n.name.as_str()).collect();
     assert_eq!(dep_names, vec!["a", "z"]);
     let req_names: Vec<_> = mid.dependents.iter().map(|n| n.name.as_str()).collect();

@@ -265,6 +265,28 @@ pub struct ServiceConfig {
     /// Arbitrary key=value labels (e.g. `created-by=bigfred`). Stable order via BTreeMap.
     #[serde(default)]
     pub labels: BTreeMap<String, String>,
+    /// Optional privilege drop / capabilities (Linux only; ignored on Android builds).
+    #[cfg(not(target_os = "android"))]
+    #[serde(default)]
+    pub security_context: Option<SecurityContext>,
+}
+
+/// Per-service privilege drop and Linux capabilities.
+///
+/// Completely disabled on Android — this type is not compiled into Android builds.
+#[cfg(not(target_os = "android"))]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SecurityContext {
+    /// Login name or numeric uid.
+    #[serde(default)]
+    pub run_as_user: Option<String>,
+    /// Group name or numeric gid; defaults to the user's primary gid when omitted.
+    #[serde(default)]
+    pub run_as_group: Option<String>,
+    /// Linux capability names (`CAP_` prefix optional). See `capabilities(7)`.
+    #[serde(default)]
+    pub capabilities: Vec<String>,
 }
 
 fn default_true() -> bool {
@@ -527,6 +549,30 @@ impl Config {
                 }
             }
             validate_labels(&svc.name, &svc.labels)?;
+            #[cfg(not(target_os = "android"))]
+            if let Some(ref sec) = svc.security_context {
+                if let Some(ref u) = sec.run_as_user {
+                    if u.trim().is_empty() {
+                        return Err(Error::Config(format!(
+                            "service '{}': securityContext.runAsUser must not be empty",
+                            svc.name
+                        )));
+                    }
+                }
+                if let Some(ref g) = sec.run_as_group {
+                    if g.trim().is_empty() {
+                        return Err(Error::Config(format!(
+                            "service '{}': securityContext.runAsGroup must not be empty",
+                            svc.name
+                        )));
+                    }
+                }
+                for cap in &sec.capabilities {
+                    crate::security::validate_cap_name(cap).map_err(|e| {
+                        Error::Config(format!("service '{}': securityContext.{}", svc.name, e))
+                    })?;
+                }
+            }
         }
         for svc in &self.services {
             for dep in &svc.depends_on {
@@ -605,7 +651,7 @@ struct DropinFile {
 }
 
 /// Collect relative paths of `*.json` under `root`, sorted lexicographically.
-fn collect_dropin_rel_paths(root: &Path) -> Result<Vec<PathBuf>> {
+pub(crate) fn collect_dropin_rel_paths(root: &Path) -> Result<Vec<PathBuf>> {
     let mut out = Vec::new();
     if !root.is_dir() {
         return Ok(out);
@@ -737,6 +783,8 @@ pub fn example_config() -> Config {
                     timeout: 5,
                 }),
                 labels: BTreeMap::new(),
+                #[cfg(not(target_os = "android"))]
+                security_context: None,
             },
             ServiceConfig {
                 name: "redis".into(),
@@ -757,6 +805,8 @@ pub fn example_config() -> Config {
                 cwd: "/".into(),
                 liveness_probe: None,
                 labels: BTreeMap::new(),
+                #[cfg(not(target_os = "android"))]
+                security_context: None,
             },
             ServiceConfig {
                 name: "remote-icmp".into(),
@@ -780,6 +830,12 @@ pub fn example_config() -> Config {
                 cwd: "/".into(),
                 liveness_probe: None,
                 labels: BTreeMap::new(),
+                #[cfg(not(target_os = "android"))]
+                security_context: Some(SecurityContext {
+                    run_as_user: Some("nobody".into()),
+                    run_as_group: None,
+                    capabilities: vec!["CAP_NET_RAW".into()],
+                }),
             },
         ],
     }

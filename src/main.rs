@@ -30,6 +30,14 @@ struct Cli {
     command: Option<Commands>,
 }
 
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[value(rename_all = "lower")]
+enum OutputFormat {
+    #[default]
+    Human,
+    Json,
+}
+
 #[derive(Subcommand, Debug)]
 enum Commands {
     /// Run as PID 1 / system init (start services, supervise, IPC)
@@ -94,7 +102,12 @@ enum Commands {
         selector: Vec<String>,
     },
     /// Show detailed status, dependencies, and recent lifecycle events
-    Describe { name: String },
+    Describe {
+        name: String,
+        /// Output format: `human` (default) or `json` (raw service object from source file)
+        #[arg(short = 'o', long = "output", value_enum, default_value_t = OutputFormat::Human)]
+        output: OutputFormat,
+    },
     /// Show service logs (or mixed if name omitted)
     Logs {
         name: Option<String>,
@@ -246,7 +259,13 @@ fn main() -> ExitCode {
             show_labels,
             selector,
         } => cli::cmd_list(&cli.socket, show_labels, &selector),
-        Commands::Describe { name } => cli::cmd_describe(&cli.socket, &name),
+        Commands::Describe { name, output } => {
+            let out = match output {
+                OutputFormat::Human => microinit::protocol::DescribeOutput::Human,
+                OutputFormat::Json => microinit::protocol::DescribeOutput::Json,
+            };
+            cli::cmd_describe(&cli.socket, &name, out)
+        }
         Commands::Logs {
             name,
             follow,

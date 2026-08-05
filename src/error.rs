@@ -50,6 +50,11 @@ pub enum Error {
     #[error("nix error: {0}")]
     Nix(#[from] nix::Error),
 
+    /// Privilege / capability setup failure for a supervised service.
+    #[cfg(not(target_os = "android"))]
+    #[error("security: {0}")]
+    Security(String),
+
     #[error("{0}")]
     Other(String),
 }

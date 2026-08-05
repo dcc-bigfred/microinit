@@ -26,6 +26,8 @@ fn minimal_svc(name: &str) -> ServiceConfig {
         cwd: "/".into(),
         liveness_probe: None,
         labels: BTreeMap::new(),
+        #[cfg(not(target_os = "android"))]
+        security_context: None,
     }
 }
 
@@ -65,6 +67,8 @@ fn resolve_cmd_fallback() {
         cwd: "/".into(),
         liveness_probe: None,
         labels: BTreeMap::new(),
+        #[cfg(not(target_os = "android"))]
+        security_context: None,
     };
     assert_eq!(svc.resolve_start().unwrap(), "/etc/init.d/redis start");
     assert_eq!(svc.resolve_stop().unwrap(), "/etc/init.d/redis stop");
@@ -92,6 +96,8 @@ fn resolve_explicit_cmds_prefer_over_cmd() {
         cwd: "/".into(),
         liveness_probe: None,
         labels: BTreeMap::new(),
+        #[cfg(not(target_os = "android"))]
+        security_context: None,
     };
     assert_eq!(svc.resolve_start().unwrap(), "start-me");
     assert_eq!(svc.resolve_stop().unwrap(), "stop-me");
@@ -119,6 +125,8 @@ fn resolve_restart_falls_back_to_stop_and_start() {
         cwd: "/".into(),
         liveness_probe: None,
         labels: BTreeMap::new(),
+        #[cfg(not(target_os = "android"))]
+        security_context: None,
     };
     assert_eq!(svc.resolve_restart().unwrap(), "do-stop && do-start");
 }
@@ -144,6 +152,8 @@ fn resolve_start_errors_without_cmds() {
         cwd: "/".into(),
         liveness_probe: None,
         labels: BTreeMap::new(),
+        #[cfg(not(target_os = "android"))]
+        security_context: None,
     };
     assert!(svc.resolve_start().is_err());
     assert!(svc.resolve_stop().is_err());
@@ -496,4 +506,59 @@ fn open_telemetry_defaults_from_json() {
     assert_eq!(cfg.open_telemetry.protocol, "http");
     assert_eq!(cfg.open_telemetry.service_name, "microinit");
     assert_eq!(cfg.open_telemetry.export_interval_secs, 15);
+}
+
+#[cfg(not(target_os = "android"))]
+#[test]
+fn security_context_parses_and_validates() {
+    let raw = r#"{
+      "services": [{
+        "name": "web",
+        "cmd": "/bin/web",
+        "securityContext": {
+          "runAsUser": "nobody",
+          "runAsGroup": "nogroup",
+          "capabilities": ["CAP_NET_BIND_SERVICE", "net_raw"]
+        }
+      }]
+    }"#;
+    let cfg: Config = serde_json::from_str(raw).unwrap();
+    cfg.validate().unwrap();
+    let sec = cfg.get("web").unwrap().security_context.as_ref().unwrap();
+    assert_eq!(sec.run_as_user.as_deref(), Some("nobody"));
+    assert_eq!(sec.capabilities.len(), 2);
+}
+
+#[cfg(not(target_os = "android"))]
+#[test]
+fn security_context_rejects_unknown_capability() {
+    let mut svc = minimal_svc("x");
+    svc.security_context = Some(SecurityContext {
+        run_as_user: Some("nobody".into()),
+        run_as_group: None,
+        capabilities: vec!["NOT_A_REAL_CAP".into()],
+    });
+    let cfg = Config {
+        services: vec![svc],
+        ..Config::default()
+    };
+    let err = cfg.validate().unwrap_err().to_string();
+    assert!(err.contains("unknown capability"), "{err}");
+}
+
+#[cfg(not(target_os = "android"))]
+#[test]
+fn security_context_rejects_empty_user() {
+    let mut svc = minimal_svc("x");
+    svc.security_context = Some(SecurityContext {
+        run_as_user: Some("  ".into()),
+        run_as_group: None,
+        capabilities: vec![],
+    });
+    let cfg = Config {
+        services: vec![svc],
+        ..Config::default()
+    };
+    let err = cfg.validate().unwrap_err().to_string();
+    assert!(err.contains("runAsUser"), "{err}");
 }

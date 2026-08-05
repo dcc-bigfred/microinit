@@ -154,6 +154,8 @@ mod tests {
             cwd: "/".into(),
             liveness_probe: None,
             labels: BTreeMap::new(),
+            #[cfg(not(target_os = "android"))]
+            security_context: None,
         }
     }
 

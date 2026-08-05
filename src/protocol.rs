@@ -103,6 +103,36 @@ pub struct DepNode {
     pub state: ServiceState,
 }
 
+/// Actual identity of a running process (from `/proc/<pid>/status`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RunningIdentity {
+    pub uid: u32,
+    pub gid: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+}
+
+/// Raw service object as it appears in its source config / drop-in file.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceSource {
+    /// File the service was read from (drop-in path or main config path).
+    pub path: String,
+    /// Raw service object from that file (unmerged).
+    pub json: serde_json::Value,
+}
+
+/// Output mode for `describe` (wire + CLI).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum DescribeOutput {
+    #[default]
+    Human,
+    Json,
+}
+
 /// Full `describe` payload for one service.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServiceDescribe {
@@ -119,6 +149,16 @@ pub struct ServiceDescribe {
     pub dep_edges: Vec<(String, String)>,
     /// Oldest → newest, last [`crate::constants::EVENT_RETURN`] events.
     pub events: Vec<ServiceEvent>,
+    /// Live process identity from `/proc/<pid>/status` when running.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub running_as: Option<RunningIdentity>,
+    /// Configured security context (definition). Absent on Android builds.
+    #[cfg(not(target_os = "android"))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub security_context: Option<crate::config::SecurityContext>,
+    /// Raw source-file object; populated when `Request::Describe.output` is `json`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<ServiceSource>,
 }
 
 /// Log stream / severity for a captured line.
@@ -202,6 +242,9 @@ pub enum Request {
     /// Rich status: deps, reverse deps, subgraph, recent lifecycle events.
     Describe {
         name: String,
+        /// When `json`, the response includes the raw source-file service object.
+        #[serde(default)]
+        output: DescribeOutput,
     },
     Enable {
         name: String,
@@ -240,7 +283,7 @@ pub enum Response {
         status: ServiceStatus,
     },
     Describe {
-        describe: ServiceDescribe,
+        describe: Box<ServiceDescribe>,
     },
     /// One log line in a stream; ends with `Ok` when follow=false and buffer drained.
     Log {
