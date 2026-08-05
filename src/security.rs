@@ -153,6 +153,8 @@ pub struct ResolvedIdentity {
     pub home: Option<String>,
     /// Suggested `USER` / `LOGNAME` from passwd (best-effort).
     pub username: Option<String>,
+    /// `true` when `runAsUser` was a login name (not a numeric uid string).
+    pub named_user: bool,
 }
 
 impl ResolvedIdentity {
@@ -188,6 +190,7 @@ pub fn resolve(ctx: &SecurityContext) -> Result<Option<ResolvedIdentity>> {
     let mut primary_gid: Option<u32> = None;
     let mut home: Option<String> = None;
     let mut username: Option<String> = None;
+    let mut named_user = false;
 
     if let Some(ref user_spec) = ctx.run_as_user {
         let spec = user_spec.trim();
@@ -206,6 +209,7 @@ pub fn resolve(ctx: &SecurityContext) -> Result<Option<ResolvedIdentity>> {
                 )));
             }
         } else {
+            named_user = true;
             let u = User::from_name(spec)
                 .map_err(|e| Error::Security(format!("lookup user '{spec}': {e}")))?
                 .ok_or_else(|| Error::Security(format!("unknown user '{spec}'")))?;
@@ -247,6 +251,7 @@ pub fn resolve(ctx: &SecurityContext) -> Result<Option<ResolvedIdentity>> {
         caps,
         home,
         username,
+        named_user,
     };
     if ident.is_noop() {
         Ok(None)
@@ -330,7 +335,8 @@ pub fn apply_pre_exec(ident: &ResolvedIdentity) -> Result<()> {
 
 fn apply_groups(ident: &ResolvedIdentity) -> Result<()> {
     use std::ffi::CString;
-    if let (Some(ref name), Some(gid)) = (&ident.username, ident.gid) {
+    if ident.named_user {
+        if let (Some(ref name), Some(gid)) = (&ident.username, ident.gid) {
         let cname = CString::new(name.as_str()).map_err(|_| {
             Error::Security(format!("username '{name}' contains NUL"))
         })?;
@@ -339,7 +345,8 @@ fn apply_groups(ident: &ResolvedIdentity) -> Result<()> {
                 "initgroups({name}, {gid}): {e} (required when runAsUser/runAsGroup is set)"
             ))
         })?;
-        return Ok(());
+            return Ok(());
+        }
     }
     unistd::setgroups(&[]).map_err(|e| {
         Error::Security(format!(
