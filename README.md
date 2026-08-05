@@ -4,7 +4,7 @@
   <img src="docs/logo.png" alt="microinit" width="240">
 </p>
 
-Lightweight PID 1 init system and service supervisor designed for BigFred OS.
+Lightweight PID 1 init system and service supervisor for embedded Linux and containers.
 Works in embedded systems based on Linux as well as in containers.
 
 Lightning fast and solid-rock reliable. Inspired by supervisord and Kubernetes, handles dependencies, able to self-heal.
@@ -131,6 +131,9 @@ MIT
 
 See **[docs/README.md](docs/README.md)** for the full index.
 
-- [Operator guide](docs/operator.md) — manage services, write config, dependencies, boot  
+- [Operator guide](docs/operator.md) — everyday CLI and boot  
+- [Configuration](docs/configuration.md) — JSON, drop-ins, hot reload  
+- [Service lifecycle](docs/service-lifecycle.md) — states and dependency behaviour at boot  
+- [Using as supervisord](docs/using-as-supervisord.md) — PHP-FPM + NGINX example  
 - [Control socket API](docs/api.md) — Unix socket protocol for integrations  
 - [Architecture](docs/architecture.md) — design overview (`init` / `supervise`, reload, OTel)

@@ -333,6 +333,7 @@ For `logs` with `follow: true`, keep reading frames in a loop (each frame has it
 
 ## Further reading
 
-- [Operator guide](operator.md) — day-to-day CLI and config  
+- [Operator guide](operator.md) — day-to-day CLI  
+- [Configuration](configuration.md) — JSON files and hot reload    
 - [Architecture](architecture.md) — internals  
 - [Documentation index](README.md)

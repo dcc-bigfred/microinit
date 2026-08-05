@@ -1,20 +1,24 @@
 # Operator guide
 
-This guide is for people who already know a Linux shell and need to **run and maintain services** under microinit on a device (or in a container). You do not need to know Rust.
+For someone who knows basic Linux (SSH, editing files, systemd-style thinking) but **does not need to know** microinit or Rust. Day-to-day work: status, start/stop, boot.
+
+**More detail:**
+
+- [Configuration](configuration.md) — JSON files, drop-ins, hot reload  
+- [Service lifecycle](service-lifecycle.md) — states over time, dependencies at boot  
+- [Using as supervisord](using-as-supervisord.md) — PHP-FPM + NGINX in a container  
 
 ---
 
 ## What microinit does
 
-microinit is the program that:
+1. Starts services from JSON config  
+2. Keeps daemons alive (optional restart after crash)  
+3. Lets you start/stop/enable/disable and read logs from the shell  
 
-1. Starts a list of services from a JSON file  
-2. Keeps long-running services alive (optional restart on crash)  
-3. Lets you start/stop/enable/disable services and read their logs  
+On embedded or custom Linux systems it often runs as **PID 1** (`/sbin/init`). In a container: **`microinit supervise`** (supervisord-like).
 
-On BigFred OS it is usually **PID 1** (`/sbin/init`). In a container you often run `microinit supervise` instead.
-
-Default durable data lives under **`/data`**. You can point that elsewhere with the environment variable **`DATA_DIR`** (must be an absolute path).
+Settings and logs usually live under **`/data`**. Another root: **`DATA_DIR`** (absolute path only).
 
 ---
 
@@ -26,15 +30,14 @@ The control socket defaults to `$DATA_DIR/run/microinit.sock` (hub: `/data/run/m
 microinit list                          # name, state, pid, restarts, enabled, live_fail
 microinit list --show-labels            # same + LABELS column
 microinit list -l created-by=bigfred    # filter (AND if -l repeated)
-microinit describe redis                # deps, events, labels
 microinit describe redis                # deps, reverse deps, graph, recent events
 microinit start redis
-microinit start --force alloy           # start even if dependsOn are not ready
+microinit start --force alloy      # start even if dependsOn are not ready
 microinit stop redis
 microinit restart redis
 microinit enable dropbear
 microinit disable dropbear
-microinit logs                          # mixed recent lines
+microinit logs
 microinit logs redis --follow
 microinit logs redis --lines 100
 ```
@@ -45,43 +48,29 @@ microinit logs redis --lines 100
 
 | State | Meaning |
 |-------|---------|
-| `running` | Daemon process is up (PID tracked) |
-| `succeeded` | One-shot job finished successfully |
-| `failed` | Start failed or process exited badly |
+| `running` | Daemon is up (PID shown) |
+| `succeeded` | One-shot finished OK |
+| `failed` | Start or exit error |
 | `stopped` | Stopped on purpose |
-| `disabled` | Not allowed to start (`enabled: false`) |
-| `waiting_for_dependency` | Start requested; waiting for `dependsOn` |
-| `starting` / `restarting` | Transition in progress |
+| `disabled` | Not allowed to start |
+| `waiting_for_dependency` | Waiting for `dependsOn` |
+| `starting` / `restarting` | In progress |
+
+Full example with restarts: [Service lifecycle](service-lifecycle.md).
 
 ---
 
-## Configuration files
+## Configuration (short)
 
-### Main file
+| What | Where |
+|------|--------|
+| Main list | `$DATA_DIR/etc/microinit.json` |
+| Enable/disable override | `$DATA_DIR/etc/microinit.services.enabled-override.json` |
+| Extra services | `$DATA_DIR/etc/microinit.d/services/**/*.json` |
 
-**`$DATA_DIR/etc/microinit.json`** (usually `/data/etc/microinit.json`)
+Edit JSON, **save** — hot reload (no reboot in most cases). Invalid JSON is ignored.
 
-If the file is missing at first boot, microinit can create an empty one and an example. On BigFred OS the image often **seeds** this file from `/etc/microinit/microinit.json` during early-boot (only if `/data` does not already have a copy).
-
-Editing `/data/etc/microinit.json` is the normal way to change what runs on a given device.
-
-### Enable/disable override
-
-**`$DATA_DIR/etc/microinit.services.enabled-override.json`**
-
-Written when you run `microinit enable` / `disable`. It only stores `true`/`false` per service name and wins over the `enabled` field in the main JSON. You rarely edit this by hand.
-
-### Drop-ins
-
-**`$DATA_DIR/etc/microinit.d/services/**/*.json`**
-
-Extra or overriding service definitions. Files are merged in **path sort order**; for the same service `name`, a **later** file wins. Useful for site-specific add-ons without rewriting the whole base config.
-
-### Hot-reload
-
-Saving any of those JSON files is picked up automatically (inotify). Invalid JSON keeps the previous config and logs a warning.
-
-Changes to **socket path**, **log TTYs**, and **log-to-files** options need a **full microinit restart** (reboot on a hub).
+Details: [Configuration](configuration.md).
 
 ---
 
@@ -175,37 +164,22 @@ Example: Redis needs the network service first.
 "dependsOn": ["network"]
 ```
 
-What happens:
-
-1. You (or boot) request start of `redis`.  
-2. If `network` is not yet `running`/`succeeded`, redis goes to **`waiting_for_dependency`**.  
-3. When `network` becomes ready, redis **starts by itself**.  
-4. If you **`stop`** redis while it is waiting, that wait is cancelled. Later, when network is up, redis will **not** auto-start until you `start` it again.
-
-To start anyway (debugging):
+If `network` is not `running` or `succeeded`, the service stays in **`waiting_for_dependency`** and starts **on its own** when ready. Manual **`stop`** cancels the wait.
 
 ```bash
-microinit start --force redis
+microinit start --force redis   # debugging only
 ```
-
-You will see a short message on stdout, for example:
-
-- `redis: waiting for dependencies (network)`  
-- `redis: starting with --force (unmet dependencies: network)`  
-- `redis: starting`  
 
 ---
 
-## Boot sequence (init mode)
-
-Typical hub boot:
+## Boot sequence (init mode as PID 1)
 
 1. Kernel starts `/sbin/init` (microinit).  
-2. **Early-boot** script runs (mount `/data`, seed configs, remount root RO, …).  
-3. Config is loaded from disk (**after** early-boot).  
-4. Enabled services start (order respects `dependsOn`; `background: true` services start in parallel).  
-5. Console shows `[ OK ]` / `[ FAIL ]` style status; getty on the console TTY.  
-6. Control socket listens; config files are watched for reload.  
+2. **Early-boot** (mount `/data`, seed config, …).  
+3. Config loaded from disk.  
+4. Enabled services start (`dependsOn` order; `background: true` in parallel).  
+5. Console `[ OK ]` / `[ FAIL ]`; getty.  
+6. IPC socket; JSON files watched for reload.  
 
 On shutdown in **`init`** mode (`shutdown -r`, IPC `shutdown`, SIGTERM, …): services stop in reverse dependency order, then the **unmount** script runs (unbind mounts / umount `/data`), then reboot or power-off.
 
@@ -215,32 +189,31 @@ In **`supervise`** mode there is no early-boot, getty, late unmount, or machine 
 
 | Where | What |
 |-------|------|
-| `/dev/tty2` (default) | Service stdout/stderr |
-| `/dev/tty3` (default) | microinit’s own messages |
-| `microinit logs …` | Same rings over the socket |
-| `$DATA_DIR/logs/` | Optional files if `logs.logToFiles` is true |
+| `/dev/tty2` | Service stdout/stderr |
+| `/dev/tty3` | microinit messages |
+| `microinit logs …` | Same via socket |
+| `$DATA_DIR/logs/` | Files when `logs.logToFiles: true` |
 
 ---
 
-## Common operator tasks
+## Common tasks
 
-**See why something did not start**
+**Why did it not start?**
 
 ```bash
 microinit list
 microinit logs nameofservice --lines 50
-# also check /dev/tty3
 ```
 
-**Temporarily disable a service across reboots**
+**Disable across reboots**
 
 ```bash
 microinit disable grafana
 ```
 
-**Change config and apply**
+**Apply a config change**
 
-Edit `/data/etc/microinit.json` (or a drop-in), save — wait a moment for reload — then `microinit list`.
+Edit a file under `/data/etc/`, save, wait a moment, `microinit list`.
 
 **Service dies and stays dead**
 
@@ -250,6 +223,9 @@ Check `restartPolicy` and that microinit is tracking a real PID (`list` shows a 
 
 ## Further reading
 
-- [Control socket API](api.md) — for scripts and UIs that talk to the socket directly  
-- [Architecture](architecture.md) — design background  
-- [Documentation index](README.md)
+- [Configuration](configuration.md)  
+- [Service lifecycle](service-lifecycle.md)  
+- [Using as supervisord](using-as-supervisord.md)  
+- [Control socket API](api.md) — scripts and UI  
+- [Architecture](architecture.md) — for developers  
+- [Documentation index](README.md)  

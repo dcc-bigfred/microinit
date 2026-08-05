@@ -8,7 +8,7 @@ This document explains **why** microinit exists, **how** it is designed, and **w
 
 **microinit** is a small program that on a device (or in a container) **starts and supervises services** — networking, databases, applications — according to a list stored in JSON files. It can also act as a classic system init (Linux process number 1).
 
-It is not a full systemd. It aims to be **lightweight, predictable, and easy to embed** in a system image (for example BigFred OS) and in containers.
+It is not a full systemd. It aims to be **lightweight, predictable, and easy to embed** in custom Linux system images and in containers.
 
 ---
 
@@ -18,7 +18,7 @@ The same supervisor logic runs under two thin wrappers:
 
 | | `microinit init` | `microinit supervise` |
 |---|---|---|
-| Typical use | Embedded / hub system (PID 1) | Container, distroless |
+| Typical use | Embedded / custom Linux (PID 1) | Container, distroless |
 | Early-boot (mounts, etc.) | Yes | No |
 | Console login (getty) | Yes, when PID 1 | No |
 | Logs on TTYs (tty2 / tty3) | Yes | No (in-memory ring + IPC / optional files) |
@@ -175,11 +175,10 @@ With `panic = abort` in release, metrics code must avoid panics — a failure in
 
 Two independent Linux artifacts, plus an Android binary bundle:
 
-1. **ORAS (linux)** — static arm64 binaries (`microinit` + `shutdown`) plus early-boot and unmount scripts for the hub system image, e.g. `ghcr.io/dcc-bigfred/microinit-linux-arm64`.
+1. **ORAS (linux)** — static arm64 binaries (`microinit` + `shutdown`) plus early-boot and unmount scripts for system images (see project README for registry URLs).
 2. **ORAS (android)** — supervise-only Bionic binaries (`microinit` + `shutdown`, built
-   with `--no-default-features`), e.g. `ghcr.io/dcc-bigfred/microinit-android-arm64`.
-   GitHub Releases also ship `armv7` and `x86_64`.
-3. **Distroless container image** (amd64 + arm64) — `ghcr.io/dcc-bigfred/microinit`, default `ENTRYPOINT /microinit` + `CMD supervise`.
+   with `--no-default-features`). GitHub Releases also ship `armv7` and `x86_64`.
+3. **Distroless container image** (amd64 + arm64) — default `ENTRYPOINT /microinit` + `CMD supervise` (see README for the current image name).
 
 Tag lifecycle: `main` / `sha-<7>` on push, `v*` / `latest-release` on release.
 
