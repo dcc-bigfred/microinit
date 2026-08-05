@@ -44,9 +44,7 @@ struct RuntimeEvent {
 impl RuntimeEvent {
     fn to_protocol(&self) -> ServiceEvent {
         ServiceEvent {
-            ts: self
-                .ts
-                .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            ts: self.ts.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
             kind: self.kind,
             from: self.from,
             to: self.to,
@@ -411,9 +409,8 @@ impl Supervisor {
         };
 
         // --- Graph construction unlocked ---
-        let state_of = |n: &str| -> ServiceState {
-            states.get(n).copied().unwrap_or(ServiceState::Pending)
-        };
+        let state_of =
+            |n: &str| -> ServiceState { states.get(n).copied().unwrap_or(ServiceState::Pending) };
 
         let mut depends_on: Vec<DepNode> = depends_on_names
             .iter()

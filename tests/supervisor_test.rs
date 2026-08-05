@@ -483,7 +483,9 @@ fn describe_event_ring_returns_at_most_event_return() {
     let (sup, dir) = make_sup(vec![job("svc", "true", &[], true)]);
     sup.boot().unwrap();
     // Generate more transitions than the ring can hold.
-    let n = microinit::constants::EVENT_RING_CAP.saturating_mul(3).max(8);
+    let n = microinit::constants::EVENT_RING_CAP
+        .saturating_mul(3)
+        .max(8);
     for i in 0..n {
         sup.set_enabled("svc", i % 2 == 0).unwrap();
         thread::sleep(Duration::from_millis(20));
@@ -499,7 +501,10 @@ fn describe_event_ring_returns_at_most_event_return() {
     );
     // Oldest → newest: last event should be a state_change from the toggles.
     let last = desc.events.last().expect("non-empty");
-    assert_eq!(last.kind, microinit::protocol::ServiceEventKind::StateChange);
+    assert_eq!(
+        last.kind,
+        microinit::protocol::ServiceEventKind::StateChange
+    );
 
     let _ = std::fs::remove_dir_all(dir);
 }
