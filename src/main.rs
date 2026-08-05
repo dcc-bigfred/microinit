@@ -5,13 +5,11 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use microinit::cli;
-use microinit::config::{
-    self, default_config_path, default_socket_path, DEFAULT_INIT_LOGS_TTY, DEFAULT_LOGS_TTY,
-};
+use microinit::config::{self, default_config_path, default_socket_path};
 use microinit::init;
 
 #[cfg(feature = "init")]
-use microinit::config::DEFAULT_CONSOLE;
+use microinit::config::{DEFAULT_CONSOLE, DEFAULT_INIT_LOGS_TTY, DEFAULT_LOGS_TTY};
 #[cfg(feature = "init")]
 use std::thread;
 #[cfg(feature = "init")]
@@ -135,6 +133,7 @@ fn default_init_opts(socket: String) -> init::InitOpts {
         spawn_getty: true,
         attach_ttys: true,
         socket,
+        machine_shutdown: true,
     }
 }
 
@@ -226,23 +225,18 @@ fn main() -> ExitCode {
             spawn_getty: true,
             attach_ttys: true,
             socket,
+            machine_shutdown: true,
         }),
         Commands::Supervise {
             console,
             config: config_path,
             log_to_files,
-        } => init::run(init::InitOpts {
-            logs_tty: DEFAULT_LOGS_TTY.to_string(),
-            init_logs_tty: DEFAULT_INIT_LOGS_TTY.to_string(),
+        } => init::run(init::supervise_opts(
             console,
-            paths: paths_for_config(&config_path),
-            skip_early_boot: true,
-            require_early_boot: false,
-            log_to_files,
-            spawn_getty: false,
-            attach_ttys: false,
+            paths_for_config(&config_path),
             socket,
-        }),
+            log_to_files,
+        )),
         Commands::Start { name, force } => cli::cmd_start(&cli.socket, &name, force),
         Commands::Stop { name } => cli::cmd_stop(&cli.socket, &name),
         Commands::Restart { name } => cli::cmd_restart(&cli.socket, &name),

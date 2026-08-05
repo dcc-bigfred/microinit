@@ -56,8 +56,9 @@ API used by the same binary's management subcommands.
 .Cm supervise
 uses the same runtime as
 .Cm init
-but skips early-boot, getty, and TTY attach
-.Pq suitable for containers / distroless images .
+but skips early-boot, getty, TTY attach, late unmount, and machine reboot
+.Pq suitable for containers / distroless images ;
+on shutdown it only stops services, syncs, and exits.
 .Pp
 When invoked as
 .Pa /sbin/init

@@ -136,7 +136,10 @@ Disabling stops the service; enabling requests a start (subject to dependencies)
 
 `mode` is one of: `reboot`, `poweroff`, `halt`.
 
-**Response:** `ok`, then the daemon begins ordered shutdown (stop all services, run late-unmount script, then reboot/poweroff/halt).
+**Response:** `ok`, then the daemon begins ordered shutdown:
+
+- **`init` mode:** stop all services, run late-unmount script, then reboot/poweroff/halt.
+- **`supervise` mode:** stop all services, sync, and exit the process (no unmount script, no `reboot(2)`). The `mode` field is accepted but ignored for machine power state.
 
 Operators normally use the companion `shutdown` binary (`shutdown -r now`, …) which sends this request and falls back to BusyBox `/sbin/{poweroff,reboot,halt}` if the socket is missing.
 

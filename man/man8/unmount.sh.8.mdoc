@@ -9,11 +9,15 @@
 .Sh DESCRIPTION
 Shell script executed by
 .Xr microinit 8
-at the end of ordered shutdown, after all supervised services have stopped and
+in
+.Cm init
+mode at the end of ordered shutdown, after all supervised services have stopped and
 before
 .Xr reboot 2
 /
 .Xr poweroff .
+.Cm supervise
+mode never runs this script.
 Not hardcoded in Rust so unmount policy can change without recompilation.
 .Pp
 Search order:
