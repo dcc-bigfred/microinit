@@ -7,6 +7,8 @@ Guides and references for running and integrating **microinit**.
 | [Operator guide](operator.md) | Linux admins / device operators | Managing services from the shell, writing JSON config, dependencies, boot sequence |
 | [Control socket API](api.md) | Integrators / UI / scripts | Unix socket framing, request/response JSON |
 | [Architecture](architecture.md) | Developers | Design overview: `init` vs `supervise`, reload, OTel, distribution |
+| [Developer index](developer.md) | Contributors / embedders | Doc map + Go SDK pointer |
+| [Go SDK](sdk/golang.md) | Go integrators | `client` / `config` / `supervise` with examples |
 
 Also see the man pages in the repository:
 
