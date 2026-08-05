@@ -53,7 +53,7 @@ fn request_response_serde_roundtrip() {
             restarts: 2,
             liveness_failures: 1,
             enabled: true,
-                labels: BTreeMap::new(),
+            labels: BTreeMap::new(),
         },
     };
     let json = serde_json::to_string(&resp).unwrap();

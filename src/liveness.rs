@@ -151,7 +151,7 @@ mod tests {
             env: HashMap::new(),
             cwd: "/".into(),
             liveness_probe: None,
-        labels: BTreeMap::new(),
+            labels: BTreeMap::new(),
         }
     }
 
