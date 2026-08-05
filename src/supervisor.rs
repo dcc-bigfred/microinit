@@ -1027,8 +1027,7 @@ impl Supervisor {
         }
 
         let stop_all = self.shared.stop_all.load(Ordering::SeqCst);
-        let should_restart =
-            cfg.restart_policy.should_restart(success) && enabled && !stop_all;
+        let should_restart = cfg.restart_policy.should_restart(success) && enabled && !stop_all;
         if !should_restart {
             let st = if success {
                 ServiceState::Succeeded
