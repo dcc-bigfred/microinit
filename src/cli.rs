@@ -79,8 +79,8 @@ pub fn cmd_list(socket: &Path, show_labels: bool, selectors: &[String]) -> Resul
                 .collect();
             if show_labels {
                 println!(
-                    "{:<20} {:<22} {:>8} {:>8} {:>8} {:>10} {}",
-                    "NAME", "STATE", "PID", "RESTARTS", "ENABLED", "LIVE_FAIL", "LABELS"
+                    "{:<20} {:<22} {:>8} {:>8} {:>8} {:>10} LABELS",
+                    "NAME", "STATE", "PID", "RESTARTS", "ENABLED", "LIVE_FAIL"
                 );
             } else {
                 println!(
