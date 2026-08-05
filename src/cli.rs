@@ -121,15 +121,39 @@ pub fn cmd_list(socket: &Path, show_labels: bool, selectors: &[String]) -> Resul
     }
 }
 
-pub fn cmd_describe(socket: &Path, name: &str) -> Result<()> {
-    match request(socket, &Request::Describe { name: name.into() })? {
+pub fn cmd_describe(
+    socket: &Path,
+    name: &str,
+    output: crate::protocol::DescribeOutput,
+) -> Result<()> {
+    match request(
+        socket,
+        &Request::Describe {
+            name: name.into(),
+            output,
+        },
+    )? {
         Response::Describe { describe } => {
-            print_describe(&describe);
+            match output {
+                crate::protocol::DescribeOutput::Json => print_describe_json(&describe)?,
+                crate::protocol::DescribeOutput::Human => print_describe(&describe),
+            }
             Ok(())
         }
         Response::Error { message, .. } => Err(Error::Ipc(message)),
         other => Err(Error::Ipc(format!("unexpected response: {other:?}"))),
     }
+}
+
+fn print_describe_json(d: &ServiceDescribe) -> Result<()> {
+    let Some(ref src) = d.source else {
+        return Err(Error::Ipc(
+            "describe -o json: daemon did not return source".into(),
+        ));
+    };
+    eprintln!("# from: {}", src.path);
+    println!("{}", serde_json::to_string_pretty(&src.json)?);
+    Ok(())
 }
 
 fn print_describe(d: &ServiceDescribe) {
@@ -138,6 +162,11 @@ fn print_describe(d: &ServiceDescribe) {
     println!("Service: {}", s.name);
     println!("State:   {}", s.state);
     println!("PID:     {pid}");
+    println!("Running as: {}", format_running_as(d.running_as.as_ref()));
+    println!(
+        "Security:  {}",
+        format_security_context(d.security_context.as_ref())
+    );
     println!("Enabled: {}", if s.enabled { "yes" } else { "no" });
     println!("Restarts: {}", s.restarts);
     println!("Liveness failures: {}", s.liveness_failures);
@@ -174,6 +203,29 @@ fn print_describe(d: &ServiceDescribe) {
             println!("  {}", format_event(ev));
         }
     }
+}
+
+fn format_running_as(id: Option<&crate::protocol::RunningIdentity>) -> String {
+    let Some(id) = id else {
+        return "-".into();
+    };
+    let user = id.user.as_deref().unwrap_or("?");
+    let group = id.group.as_deref().unwrap_or("?");
+    format!("{user}({}) / {group}({})", id.uid, id.gid)
+}
+
+fn format_security_context(sec: Option<&crate::config::SecurityContext>) -> String {
+    let Some(sec) = sec else {
+        return "(none)".into();
+    };
+    let user = sec.run_as_user.as_deref().unwrap_or("-");
+    let group = sec.run_as_group.as_deref().unwrap_or("-");
+    let caps = if sec.capabilities.is_empty() {
+        "[]".into()
+    } else {
+        format!("[{}]", sec.capabilities.join(", "))
+    };
+    format!("runAsUser={user} runAsGroup={group} capabilities={caps}")
 }
 
 fn print_dep_list(nodes: &[DepNode]) {

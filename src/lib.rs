@@ -33,6 +33,8 @@ pub mod logs;
 pub mod otel;
 pub mod protocol;
 pub mod reaper;
+#[cfg(not(target_os = "android"))]
+pub mod security;
 pub mod service;
 #[cfg(feature = "init")]
 #[cfg_attr(target_os = "android", allow(unsafe_code))]

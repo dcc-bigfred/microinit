@@ -121,6 +121,7 @@ If `startCmd` is set, it is used instead of `cmd start`. Prefer **`exec` of the 
 | `dependsOn` | Other service names that must be `running` or `succeeded` first |
 | `env` / `cwd` | Extra environment and working directory |
 | `livenessProbe` | Optional periodic check. Exactly one of `cmd`, `httpUrl`, or `tcpAddr`. Shared: `interval` (default `60`), `timeout` (default `5`). `cmd` uses `successExitCodes` (default `[0]`); `httpUrl` uses `httpMethod` (default `GET`) and `httpAcceptedCodes` (default `[200]`); `tcpAddr` is `host:port`. Runs while `running` / `succeeded` / `failed`; failure re-runs start |
+| `securityContext` | Optional privilege drop (`runAsUser` / `runAsGroup`) and Linux capabilities. See [Security context](#security-context). Disabled on Android |
 
 Example one-shot with recovery (network bring-up):
 
@@ -153,6 +154,101 @@ HTTP / TCP examples:
 ```json
 "livenessProbe": { "tcpAddr": "127.0.0.1:6379", "interval": 15, "timeout": 3 }
 ```
+
+---
+
+## Security context
+
+`securityContext` (optional) drops the service to a different user/group and optionally keeps Linux capabilities across `exec`. It applies to **all** command paths (start, stop, restart, liveness `cmd` probe). microinit must run as root (or have `CAP_SETUID`+`CAP_SETGID` **and** be able to call `setgroups(2)`) to apply an identity drop; otherwise the service **fails to start** with a clear error.
+
+**Not supported on Android** — a configured `securityContext` is rejected at config load (not silently ignored).
+
+| Field | Role |
+|-------|------|
+| `runAsUser` | Login name **or** numeric uid (purely numeric string → uid) |
+| `runAsGroup` | Group name **or** numeric gid; optional when the user has a passwd entry (defaults to primary gid). **Required** for numeric uids with no passwd entry |
+| `capabilities` | Linux capability names (`CAP_` prefix optional). The list is **exclusive** (replaces the parent's capability set; it is not additive) |
+
+Supplementary groups are cleared with `setgroups([])` (fail-closed). Environments that deny `setgroups` (e.g. user namespaces with `/proc/self/setgroups=deny`) cannot use `runAsUser`/`runAsGroup`.
+
+After the drop, microinit also:
+- shrinks the capability **bounding set** to the requested caps (or empty),
+- sets `PR_SET_NO_NEW_PRIVS` so later `exec` cannot regain privileges via setuid binaries / file caps,
+- sets `HOME` / `USER` / `LOGNAME` from passwd when known (unless overridden in `env`).
+
+Inspect a running service with `microinit describe <name>` — it shows **Running as** (live uid/gid from `/proc`) and **Security** (the configured `securityContext`). Use `microinit describe -o json <name>` to dump the raw service object from its source file (stdout is pure JSON; the path is printed on stderr). Note: `-o json` is the **unmerged** source object; human `describe` shows the **merged** in-memory definition.
+
+### Run a service as a non-root user
+
+Redis as the `redis` user (group defaults to `redis`):
+
+```json
+{
+  "name": "redis",
+  "enabled": true,
+  "daemon": true,
+  "restartPolicy": "onError",
+  "dependsOn": ["network"],
+  "startCmd": "exec redis-server --bind 127.0.0.1 --port 6379",
+  "cwd": "/var/lib/redis",
+  "securityContext": {
+    "runAsUser": "redis"
+  },
+  "livenessProbe": { "tcpAddr": "127.0.0.1:6379", "interval": 15, "timeout": 3 }
+}
+```
+
+### Numeric uid/gid
+
+`runAsUser`/`runAsGroup` accept numeric ids directly (useful in minimal images without `/etc/passwd`):
+
+```json
+"securityContext": {
+  "runAsUser": "1000",
+  "runAsGroup": "1000"
+}
+```
+
+### Capabilities (bind a privileged port without root)
+
+A service that needs to bind port 443 but otherwise runs unprivileged:
+
+```json
+{
+  "name": "webfront",
+  "enabled": true,
+  "daemon": true,
+  "restartPolicy": "onError",
+  "startCmd": "exec /usr/bin/webfront --addr :443",
+  "securityContext": {
+    "runAsUser": "webfront",
+    "capabilities": ["CAP_NET_BIND_SERVICE"]
+  },
+  "livenessProbe": { "httpUrl": "http://127.0.0.1:443/health", "httpAcceptedCodes": [200], "interval": 30, "timeout": 5 }
+}
+```
+
+### Replacing image-level `setcap`
+
+`remote-icmp` previously relied on `setcap cap_net_raw+ep` baked into the image. With `securityContext` the capability lives in the service definition and survives binary updates:
+
+```json
+{
+  "name": "remote-icmp",
+  "enabled": true,
+  "daemon": true,
+  "restartPolicy": "onError",
+  "dependsOn": ["network"],
+  "startCmd": "/usr/bin/bigfred-remote-icmp --config /data/etc/loco-server.conf",
+  "stopCmd": "killall bigfred-remote-icmp",
+  "securityContext": {
+    "runAsUser": "nobody",
+    "capabilities": ["CAP_NET_RAW"]
+  }
+}
+```
+
+> Note: `capabilities` are granted via ambient capabilities (Linux 4.3+) and are an **exclusive** set. On Android `securityContext` is rejected at config load — keep using `setcap`/root there, or omit the field from Android configs.
 
 ---
 

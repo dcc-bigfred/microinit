@@ -4,7 +4,8 @@
 //! not by `std::process::Child::wait`, to avoid racing `waitpid(-1)`.
 
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
@@ -24,7 +25,8 @@ use crate::graph::{partition_boot, shutdown_order};
 use crate::liveness::{run_probe, ProbeResult};
 use crate::logs::{capture_stream, LogHub, INIT_SERVICE};
 use crate::protocol::{
-    DepNode, LogLevel, ServiceDescribe, ServiceEvent, ServiceEventKind, ServiceState, ServiceStatus,
+    DepNode, LogLevel, ServiceDescribe, ServiceEvent, ServiceEventKind, ServiceSource,
+    ServiceState, ServiceStatus,
 };
 use crate::reaper::{ensure_reaper_thread, global_exits, ExitRegistry};
 use crate::service::{run_shell, spawn_shell, terminate_pid};
@@ -279,6 +281,8 @@ pub struct Supervisor {
     hub: Arc<LogHub>,
     console: Arc<Console>,
     override_path: PathBuf,
+    config_path: PathBuf,
+    dropins_dir: PathBuf,
     exits: Arc<ExitRegistry>,
     ctl: Mutex<HashMap<String, std::sync::mpsc::Sender<CtlMsg>>>,
 }
@@ -296,6 +300,8 @@ impl Supervisor {
         hub: Arc<LogHub>,
         console: Arc<Console>,
         override_path: PathBuf,
+        config_path: PathBuf,
+        dropins_dir: PathBuf,
     ) -> Arc<Self> {
         let mut runtimes = HashMap::new();
         for svc in &config.services {
@@ -311,6 +317,8 @@ impl Supervisor {
             hub,
             console,
             override_path,
+            config_path,
+            dropins_dir,
             exits: global_exits(),
             ctl: Mutex::new(HashMap::new()),
         })
@@ -363,9 +371,19 @@ impl Supervisor {
     ///
     /// Snapshots under short critical sections (lock order: `runtimes`, then
     /// `config`), then builds the graph and formats event timestamps unlocked.
-    pub fn describe(&self, name: &str) -> Result<ServiceDescribe> {
+    ///
+    /// When `output` is [`DescribeOutput::Json`], also attaches the raw
+    /// source-file service object (`source`).
+    pub fn describe(
+        &self,
+        name: &str,
+        output: crate::protocol::DescribeOutput,
+    ) -> Result<ServiceDescribe> {
+        use crate::protocol::DescribeOutput;
+        use crate::service::read_running_identity;
+
         // --- Snapshot under runtimes (released before config / graph work) ---
-        let (mut status, uptime_secs, events, states) = {
+        let (mut status, uptime_secs, events, states, pid) = {
             let map = mutex_lock(&self.shared.runtimes);
             let rt = map
                 .get(name)
@@ -388,6 +406,8 @@ impl Supervisor {
                 None
             };
 
+            let pid = rt.pid;
+
             let start = rt.events.len().saturating_sub(EVENT_RETURN);
             let events: Vec<ServiceEvent> = rt
                 .events
@@ -398,10 +418,14 @@ impl Supervisor {
 
             let states: HashMap<String, ServiceState> =
                 map.iter().map(|(n, r)| (n.clone(), r.state)).collect();
-            (status, uptime_secs, events, states)
+            (status, uptime_secs, events, states, pid)
         };
 
+        // Procfs / NSS outside the runtimes lock.
+        let running_as = pid.and_then(read_running_identity);
+
         // --- Snapshot dependency edges under config ---
+        let security_context;
         let (depends_on_names, services_deps) = {
             let cfg = mutex_lock(&self.config);
             let svc = cfg
@@ -410,6 +434,7 @@ impl Supervisor {
                 .find(|s| s.name == name)
                 .ok_or_else(|| Error::UnknownService(name.to_string()))?;
             status.labels = svc.labels.clone();
+            security_context = svc.security_context.clone();
             let depends_on_names = svc.depends_on.clone();
             let services_deps: Vec<(String, Vec<String>)> = cfg
                 .services
@@ -496,6 +521,12 @@ impl Supervisor {
         let mut dep_edges: Vec<(String, String)> = edge_set.into_iter().collect();
         dep_edges.sort();
 
+        let source = if matches!(output, DescribeOutput::Json) {
+            find_service_source(&self.dropins_dir, &self.config_path, name)?
+        } else {
+            None
+        };
+
         Ok(ServiceDescribe {
             status,
             uptime_secs,
@@ -504,6 +535,9 @@ impl Supervisor {
             dep_nodes,
             dep_edges,
             events,
+            running_as,
+            security_context,
+            source,
         })
     }
 
@@ -1216,11 +1250,65 @@ impl Supervisor {
     }
 }
 
-/// Compare service definitions ignoring `enabled` (handled separately on reload).
+/// Compare service definitions ignoring `enabled` (handled separately on reload)
+/// and cached `resolved_security` (derived from `securityContext`).
 fn definition_eq(a: &ServiceConfig, b: &ServiceConfig) -> bool {
     let mut x = a.clone();
     let mut y = b.clone();
     x.enabled = true;
     y.enabled = true;
+    #[cfg(not(target_os = "android"))]
+    {
+        x.resolved_security = None;
+        y.resolved_security = None;
+    }
     x == y
+}
+
+/// Locate the raw JSON object for `name` in drop-ins (later wins) or main config.
+fn find_service_source(
+    dropins_dir: &Path,
+    config_path: &Path,
+    name: &str,
+) -> Result<Option<ServiceSource>> {
+    // Prefer the last drop-in that defines the service (same merge order as load).
+    let mut found: Option<ServiceSource> = None;
+    if let Ok(rels) = crate::config::collect_dropin_rel_paths(dropins_dir) {
+        for rel in rels {
+            let path = dropins_dir.join(&rel);
+            if let Some(json) = extract_service_json(&path, name)? {
+                found = Some(ServiceSource {
+                    path: path.display().to_string(),
+                    json,
+                });
+            }
+        }
+    }
+    if found.is_some() {
+        return Ok(found);
+    }
+    if let Some(json) = extract_service_json(config_path, name)? {
+        return Ok(Some(ServiceSource {
+            path: config_path.display().to_string(),
+            json,
+        }));
+    }
+    Ok(None)
+}
+
+fn extract_service_json(path: &Path, name: &str) -> Result<Option<serde_json::Value>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let data = fs::read_to_string(path).map_err(|e| Error::io_at(path, e))?;
+    let root: serde_json::Value = serde_json::from_str(&data)?;
+    let Some(services) = root.get("services").and_then(|v| v.as_array()) else {
+        return Ok(None);
+    };
+    for svc in services {
+        if svc.get("name").and_then(|v| v.as_str()) == Some(name) {
+            return Ok(Some(svc.clone()));
+        }
+    }
+    Ok(None)
 }

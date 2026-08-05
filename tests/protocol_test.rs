@@ -36,6 +36,7 @@ fn request_response_serde_roundtrip() {
         },
         Request::Describe {
             name: "nginx".into(),
+            output: DescribeOutput::Human,
         },
     ];
     for req in cases {
@@ -62,7 +63,7 @@ fn request_response_serde_roundtrip() {
     let _: Response = serde_json::from_str(&json).unwrap();
 
     let describe = Response::Describe {
-        describe: ServiceDescribe {
+        describe: Box::new(ServiceDescribe {
             status: ServiceStatus {
                 name: "nginx".into(),
                 state: ServiceState::Running,
@@ -96,7 +97,10 @@ fn request_response_serde_roundtrip() {
                 to: Some(ServiceState::Starting),
                 detail: None,
             }],
-        },
+            running_as: None,
+            security_context: None,
+            source: None,
+        }),
     };
     let json = serde_json::to_string(&describe).unwrap();
     assert!(json.contains("\"type\":\"describe\""));
@@ -151,7 +155,7 @@ fn describe_event_kinds_serde_roundtrip() {
 
     // Empty deps still round-trip.
     let empty = Response::Describe {
-        describe: ServiceDescribe {
+        describe: Box::new(ServiceDescribe {
             status: ServiceStatus {
                 name: "solo".into(),
                 state: ServiceState::Stopped,
@@ -170,7 +174,10 @@ fn describe_event_kinds_serde_roundtrip() {
             }],
             dep_edges: vec![],
             events: events.clone(),
-        },
+            running_as: None,
+            security_context: None,
+            source: None,
+        }),
     };
     let json = serde_json::to_string(&empty).unwrap();
     let _: Response = serde_json::from_str(&json).unwrap();

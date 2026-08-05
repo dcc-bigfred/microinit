@@ -25,6 +25,9 @@ fn cfg() -> ServiceConfig {
         cwd: "/".into(),
         liveness_probe: None,
         labels: BTreeMap::new(),
+        security_context: None,
+        #[cfg(not(target_os = "android"))]
+        resolved_security: None,
     }
 }
 
@@ -79,4 +82,50 @@ fn terminate_pid_reaps_sleep() {
         nix::sys::signal::kill(pid, None),
         Err(nix::errno::Errno::ESRCH)
     ));
+}
+
+#[test]
+fn read_running_identity_self() {
+    let pid = std::process::id() as i32;
+    let id = read_running_identity(pid).expect("self identity");
+    assert_eq!(id.uid, nix::unistd::getuid().as_raw());
+    assert_eq!(id.gid, nix::unistd::getgid().as_raw());
+}
+
+#[cfg(not(target_os = "android"))]
+#[test]
+fn run_shell_as_numeric_self() {
+    // Dropping to our own uid/gid is a no-op privilege-wise but exercises the path.
+    let uid = nix::unistd::getuid().as_raw();
+    let gid = nix::unistd::getgid().as_raw();
+    let mut c = cfg();
+    c.security_context = Some(microinit::config::SecurityContext {
+        run_as_user: Some(uid.to_string()),
+        run_as_group: Some(gid.to_string()),
+        capabilities: vec![],
+    });
+    // Cache as production load would.
+    c.resolved_security =
+        microinit::security::resolve(c.security_context.as_ref().unwrap()).unwrap();
+
+    match run_shell(
+        &format!(r#"test "$(id -u)" = {uid} && test "$(id -g)" = {gid}"#),
+        &c,
+        &HashMap::new(),
+    ) {
+        Ok(code) => assert_eq!(code, 0),
+        Err(e) => {
+            let msg = e.to_string();
+            // User namespaces with setgroups=deny (or missing CAP_SETPCAP) cannot
+            // fully apply identity drops — skip rather than fail CI sandboxes.
+            if msg.contains("setgroups")
+                || msg.contains("NO_NEW_PRIVS")
+                || msg.contains("Invalid argument")
+            {
+                eprintln!("skip apply: {msg}");
+            } else {
+                panic!("{msg}");
+            }
+        }
+    }
 }

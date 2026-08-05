@@ -1,12 +1,14 @@
 //! Service process execution helpers.
 
 use std::collections::HashMap;
+use std::fs;
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
 use crate::config::ServiceConfig;
 use crate::constants::TERMINATE_POLL;
 use crate::error::{Error, Result};
+use crate::protocol::RunningIdentity;
 
 /// Shell used to run service `cmd` / probes / stop scripts.
 #[cfg(target_os = "android")]
@@ -26,6 +28,7 @@ fn build_shell_command(
     cmd: &str,
     cfg: &ServiceConfig,
     env_extra: &HashMap<String, String>,
+    #[cfg(not(target_os = "android"))] ident: Option<&crate::security::ResolvedIdentity>,
 ) -> Command {
     let mut c = Command::new(SHELL);
     c.arg("-c")
@@ -46,12 +49,55 @@ fn build_shell_command(
     for (k, v) in env_extra {
         c.env(k, v);
     }
+
+    #[cfg(not(target_os = "android"))]
+    if let Some(ident) = ident {
+        // Passwd-derived identity env unless the service overrides them.
+        if let Some(ref home) = ident.home {
+            if !cfg.env.contains_key("HOME") && !env_extra.contains_key("HOME") {
+                c.env("HOME", home);
+            }
+        }
+        if let Some(ref user) = ident.username {
+            if !cfg.env.contains_key("USER") && !env_extra.contains_key("USER") {
+                c.env("USER", user);
+            }
+            if !cfg.env.contains_key("LOGNAME") && !env_extra.contains_key("LOGNAME") {
+                c.env("LOGNAME", user);
+            }
+        }
+        crate::security::attach_pre_exec(&mut c, ident);
+    }
+
     c
+}
+
+/// Prefer the identity cached by [`Config::prepare_security`]; fall back to a
+/// one-shot resolve for ad-hoc test configs that skip prepare.
+#[cfg(not(target_os = "android"))]
+fn resolve_sec(cfg: &ServiceConfig) -> Result<Option<crate::security::ResolvedIdentity>> {
+    if cfg.security_context.is_none() {
+        return Ok(None);
+    }
+    if let Some(ref cached) = cfg.resolved_security {
+        return Ok(Some(cached.clone()));
+    }
+    match &cfg.security_context {
+        Some(ctx) => crate::security::resolve(ctx),
+        None => Ok(None),
+    }
 }
 
 /// Spawn a shell command with service env/cwd; stdout/stderr piped for capture.
 pub fn spawn_shell(cmd: &str, cfg: &ServiceConfig) -> Result<Child> {
-    build_shell_command(cmd, cfg, &HashMap::new())
+    #[cfg(not(target_os = "android"))]
+    let ident = resolve_sec(cfg)?;
+    #[cfg(not(target_os = "android"))]
+    let mut cmd_built = build_shell_command(cmd, cfg, &HashMap::new(), ident.as_ref());
+    #[cfg(target_os = "android")]
+    let mut cmd_built = build_shell_command(cmd, cfg, &HashMap::new());
+
+    cmd_built
         .spawn()
         .map_err(|e| Error::Service(cfg.name.clone(), e.to_string()))
 }
@@ -62,6 +108,13 @@ pub fn run_shell(
     cfg: &ServiceConfig,
     env_extra: &HashMap<String, String>,
 ) -> Result<i32> {
+    #[cfg(not(target_os = "android"))]
+    let ident = resolve_sec(cfg)?;
+    #[cfg(not(target_os = "android"))]
+    let status = build_shell_command(cmd, cfg, env_extra, ident.as_ref())
+        .status()
+        .map_err(|e| Error::Service(cfg.name.clone(), e.to_string()))?;
+    #[cfg(target_os = "android")]
     let status = build_shell_command(cmd, cfg, env_extra)
         .status()
         .map_err(|e| Error::Service(cfg.name.clone(), e.to_string()))?;
@@ -70,6 +123,11 @@ pub fn run_shell(
 
 /// Like [`run_shell`], but discard stdout/stderr (liveness probes must stay cheap/quiet).
 pub fn run_shell_quiet(cmd: &str, cfg: &ServiceConfig) -> Result<i32> {
+    #[cfg(not(target_os = "android"))]
+    let ident = resolve_sec(cfg)?;
+    #[cfg(not(target_os = "android"))]
+    let mut c = build_shell_command(cmd, cfg, &HashMap::new(), ident.as_ref());
+    #[cfg(target_os = "android")]
     let mut c = build_shell_command(cmd, cfg, &HashMap::new());
     c.stdout(Stdio::null()).stderr(Stdio::null());
     let status = c
@@ -89,7 +147,14 @@ pub fn run_shell_quiet_timeout(
     use std::thread;
     use std::time::Instant;
 
-    let mut child = build_shell_command(cmd, cfg, &HashMap::new())
+    #[cfg(not(target_os = "android"))]
+    let ident = resolve_sec(cfg)?;
+    #[cfg(not(target_os = "android"))]
+    let mut cmd_built = build_shell_command(cmd, cfg, &HashMap::new(), ident.as_ref());
+    #[cfg(target_os = "android")]
+    let mut cmd_built = build_shell_command(cmd, cfg, &HashMap::new());
+
+    let mut child = cmd_built
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
@@ -113,6 +178,48 @@ pub fn run_shell_quiet_timeout(
             }
         }
     }
+}
+
+/// Read the real uid/gid of a live process from `/proc/<pid>/status`.
+///
+/// Returns `None` if the process is gone or procfs is unavailable. Name
+/// resolution via passwd/group is best-effort.
+#[must_use]
+pub fn read_running_identity(pid: i32) -> Option<RunningIdentity> {
+    let path = format!("/proc/{pid}/status");
+    let data = fs::read_to_string(path).ok()?;
+    let mut uid: Option<u32> = None;
+    let mut gid: Option<u32> = None;
+    for line in data.lines() {
+        if let Some(rest) = line.strip_prefix("Uid:") {
+            // real, effective, saved, fs — take real
+            if let Some(tok) = rest.split_whitespace().next() {
+                uid = tok.parse().ok();
+            }
+        } else if let Some(rest) = line.strip_prefix("Gid:") {
+            if let Some(tok) = rest.split_whitespace().next() {
+                gid = tok.parse().ok();
+            }
+        }
+    }
+    let uid = uid?;
+    let gid = gid?;
+
+    let user = nix::unistd::User::from_uid(nix::unistd::Uid::from_raw(uid))
+        .ok()
+        .flatten()
+        .map(|u| u.name);
+    let group = nix::unistd::Group::from_gid(nix::unistd::Gid::from_raw(gid))
+        .ok()
+        .flatten()
+        .map(|g| g.name);
+
+    Some(RunningIdentity {
+        uid,
+        gid,
+        user,
+        group,
+    })
 }
 
 /// Kill a process with SIGTERM, wait `grace_secs`, then SIGKILL if still alive.

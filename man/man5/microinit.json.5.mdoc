@@ -178,6 +178,35 @@ or
 microinit probes every
 .Cm interval
 seconds; failure re-runs start.
+.It Cm securityContext
+Optional object. On Linux: drops the service to another user/group and optionally
+keeps Linux capabilities across
+.Xr exec 3 .
+On Android: rejected at config load.
+.Bl -tag -width capabilities
+.It Cm runAsUser
+Login name or numeric uid
+.It Cm runAsGroup
+Group name or numeric gid
+.Pq defaults to the user's primary gid when a passwd entry exists;
+required for numeric uids without passwd
+.It Cm capabilities
+Exclusive list of capability names from
+.Xr capabilities 7
+.Pq optional Cm CAP_
+prefix .
+Retained via ambient capabilities after
+.Xr setuid 2 .
+.El
+Supplementary groups are cleared
+.Pq fail-closed via
+.Xr setgroups 2 .
+The capability bounding set is shrunk and
+.Dv PR_SET_NO_NEW_PRIVS
+is set.
+.Cm describe
+prints the configured context and the live process identity from
+.Pa /proc .
 .El
 .Sh EXAMPLES
 See
@@ -185,4 +214,5 @@ See
 written on first boot.
 .Sh SEE ALSO
 .Xr microinit 8 ,
-.Xr microinit.services.enabled-override.json 5
+.Xr microinit.services.enabled-override.json 5 ,
+.Xr capabilities 7

@@ -39,6 +39,7 @@
 .Nm
 .Op Fl -socket Ns = Ns Ar path
 .Cm describe
+.Op Fl o Ar human|json
 .Ar name
 .Nm
 .Op Fl -socket Ns = Ns Ar path
@@ -184,6 +185,7 @@ microinit list
 microinit list --show-labels
 microinit list -l created-by=bigfred
 microinit describe redis
+microinit describe -o json redis
 microinit start redis
 microinit start --force alloy
 microinit restart redis
@@ -202,7 +204,18 @@ column, and repeatable
 to keep only services matching all selectors
 .Pq AND .
 .Cm describe
-always prints labels.
+always prints labels, the live process identity
+.Pq Cm Running as
+from
+.Pa /proc
+,
+and the configured
+.Cm securityContext
+.Pq Cm Security
+on Linux .
+.Fl o Ar json
+prints the raw service object from its source drop-in or main config file
+.Pq stdout is pure JSON; the source path goes to stderr .
 .Pp
 .Cm start
 prints a status line on stdout: either that the service is starting, that it is

@@ -17,6 +17,15 @@ type ServiceDef struct {
 	Cwd              string            `json:"cwd,omitempty"`
 	LivenessProbe    *LivenessProbe    `json:"livenessProbe,omitempty"`
 	Labels           map[string]string `json:"labels,omitempty"`
+	SecurityContext  *SecurityContext  `json:"securityContext,omitempty"`
+}
+
+// SecurityContext drops privileges and optionally keeps Linux capabilities.
+// On Android microinit rejects a configured securityContext at load time.
+type SecurityContext struct {
+	RunAsUser    string   `json:"runAsUser,omitempty"`
+	RunAsGroup   string   `json:"runAsGroup,omitempty"`
+	Capabilities []string `json:"capabilities,omitempty"`
 }
 
 // Restart policy values for ServiceDef.RestartPolicy.

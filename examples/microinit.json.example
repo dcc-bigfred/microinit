@@ -72,7 +72,13 @@
       "stopCmd": "killall bigfred-remote-icmp",
       "restartCmd": null,
       "env": {},
-      "cwd": "/"
+      "cwd": "/",
+      "securityContext": {
+        "runAsUser": "nobody",
+        "capabilities": [
+          "CAP_NET_RAW"
+        ]
+      }
     }
   ]
 }

@@ -26,6 +26,9 @@ fn svc(name: &str, deps: &[&str], bg: bool) -> ServiceConfig {
         cwd: "/".into(),
         liveness_probe: None,
         labels: BTreeMap::new(),
+        security_context: None,
+        #[cfg(not(target_os = "android"))]
+        resolved_security: None,
     }
 }
 
