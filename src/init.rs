@@ -38,6 +38,9 @@ pub struct InitOpts {
     pub attach_ttys: bool,
     /// Control socket path (overrides JSON after load).
     pub socket: String,
+    /// If true (`init`), run late unmount then reboot/poweroff/halt.
+    /// If false (`supervise`), only stop services, sync, and exit.
+    pub machine_shutdown: bool,
 }
 
 impl Default for InitOpts {
@@ -53,7 +56,31 @@ impl Default for InitOpts {
             spawn_getty: true,
             attach_ttys: true,
             socket: crate::config::default_socket_path().display().to_string(),
+            machine_shutdown: true,
         }
+    }
+}
+
+/// Options for `microinit supervise` (containers / embedded hosts).
+#[must_use]
+pub fn supervise_opts(
+    console: String,
+    paths: Paths,
+    socket: String,
+    log_to_files: bool,
+) -> InitOpts {
+    InitOpts {
+        logs_tty: DEFAULT_LOGS_TTY.to_string(),
+        init_logs_tty: DEFAULT_INIT_LOGS_TTY.to_string(),
+        console,
+        paths,
+        skip_early_boot: true,
+        require_early_boot: false,
+        log_to_files,
+        spawn_getty: false,
+        attach_ttys: false,
+        socket,
+        machine_shutdown: false,
     }
 }
 
@@ -233,6 +260,7 @@ pub fn run(opts: InitOpts) -> Result<()> {
         .unwrap_or_else(|| PathBuf::from("/data/etc"));
     let dropins_dir = opts.paths.dropins_dir.clone();
     let paths_for_reload = opts.paths.clone();
+    let machine_shutdown = opts.machine_shutdown;
     #[cfg(feature = "init")]
     let paths_for_unmount = opts.paths.clone();
     #[cfg(feature = "init")]
@@ -287,6 +315,16 @@ pub fn run(opts: InitOpts) -> Result<()> {
         if let Some(mode) = take_shutdown() {
             hub.emit_init(LogLevel::Info, format!("shutdown requested: {mode}"));
             supervisor.stop_all_ordered();
+            let _ = std::fs::remove_file(&socket_path);
+
+            // Supervise / Android: stop services only — no unmount script, no reboot(2).
+            if !machine_shutdown {
+                let _ = mode;
+                nix::unistd::sync();
+                hub.emit_init(LogLevel::Info, "supervise shutdown complete; exiting");
+                std::process::exit(0);
+            }
+
             #[cfg(feature = "init")]
             {
                 // Late unmount after all services are stopped; failures must not
@@ -303,13 +341,11 @@ pub fn run(opts: InitOpts) -> Result<()> {
                         format!("unmount failed (continuing to {mode}): {e}"),
                     );
                 }
+                crate::shutdown::finalize(mode);
             }
-            let _ = std::fs::remove_file(&socket_path);
-            #[cfg(feature = "init")]
-            crate::shutdown::finalize(mode);
             #[cfg(not(feature = "init"))]
             {
-                // Supervise-only / Android: stop + sync + clean exit (no reboot).
+                // machine_shutdown without feature init: treat as supervise exit.
                 let _ = mode;
                 nix::unistd::sync();
                 hub.emit_init(LogLevel::Info, "supervise shutdown complete; exiting");

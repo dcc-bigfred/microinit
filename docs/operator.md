@@ -207,9 +207,9 @@ Typical hub boot:
 5. Console shows `[ OK ]` / `[ FAIL ]` style status; getty on the console TTY.  
 6. Control socket listens; config files are watched for reload.  
 
-On shutdown (`shutdown -r`, IPC `shutdown`, SIGTERM, …): services stop in reverse dependency order, then the **unmount** script runs (unbind mounts / umount `/data`), then reboot or power-off.
+On shutdown in **`init`** mode (`shutdown -r`, IPC `shutdown`, SIGTERM, …): services stop in reverse dependency order, then the **unmount** script runs (unbind mounts / umount `/data`), then reboot or power-off.
 
-In **`supervise`** mode there is no early-boot and no getty — only the supervisor + socket (good for containers). Unmount still runs at the end of shutdown if a script is present (or the embedded default).
+In **`supervise`** mode there is no early-boot, getty, late unmount, or machine reboot — only the supervisor + socket (good for containers). On shutdown it stops services, syncs, and exits.
 
 ### Logs on a device
 

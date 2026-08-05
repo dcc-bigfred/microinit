@@ -23,6 +23,7 @@ The same supervisor logic runs under two thin wrappers:
 | Console login (getty) | Yes, when PID 1 | No |
 | Logs on TTYs (tty2 / tty3) | Yes | No (in-memory ring + IPC / optional files) |
 | Service supervision + control socket | Yes | Yes |
+| Late unmount + reboot/poweroff/halt | Yes | No (stop services, sync, exit) |
 
 **Architectural rule:** there are not two separate implementations. Both modes call the same startup path with different switches (`InitOpts`). A fix in the supervisor therefore applies on the device and in the container.
 
@@ -116,13 +117,15 @@ Mount policy therefore lives in a script / distro overlay, not hard-coded in Rus
 
 ## Late unmount (shutdown)
 
-At the end of ordered shutdown — after all supervised services have been stopped, and before `reboot(2)` / power-off / halt — `init` mode runs an **unmount** script (same search order as early-boot):
+At the end of ordered shutdown in **`init` mode only** — after all supervised services have been stopped, and before `reboot(2)` / power-off / halt — microinit runs an **unmount** script (same search order as early-boot):
 
 1. `$DATA_DIR/etc/microinit/unmount.sh`  
 2. `/etc/microinit/unmount.sh`  
 3. script embedded in the binary  
 
 Failures are logged and **do not block** reboot (a stuck umount must not hang the board forever). Distro overlays typically reverse early-boot (unbind `/etc/shadow`, umount `/data`, `sync`).
+
+**`supervise` mode** never runs this script and never calls `reboot(2)`: it stops services, syncs, and exits the process.
 
 ---
 
