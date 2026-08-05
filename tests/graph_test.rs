@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use microinit::config::ServiceConfig;
+use microinit::config::{RestartPolicy, ServiceConfig};
 use microinit::error::Error;
 use microinit::graph::*;
 
@@ -11,7 +11,7 @@ fn svc(name: &str, deps: &[&str], bg: bool) -> ServiceConfig {
         name: name.into(),
         enabled: true,
         daemon: true,
-        restart: false,
+        restart_policy: RestartPolicy::None,
         restart_backoff: 2,
         success_exit_codes: vec![0],
         start_wait_secs: 0,

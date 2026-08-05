@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use microinit::config::{Config, LogsConfig, ServiceConfig};
+use microinit::config::{Config, LogsConfig, RestartPolicy, ServiceConfig};
 use microinit::console::Console;
 use microinit::error::Error;
 use microinit::logs::LogHub;
@@ -30,7 +30,7 @@ fn job(name: &str, start: &str, deps: &[&str], enabled: bool) -> ServiceConfig {
         name: name.into(),
         enabled,
         daemon: false,
-        restart: false,
+        restart_policy: RestartPolicy::None,
         restart_backoff: 1,
         success_exit_codes: vec![0],
         start_wait_secs: 0,
@@ -53,7 +53,7 @@ fn daemon_cfg(name: &str, start: &str) -> ServiceConfig {
         name: name.into(),
         enabled: true,
         daemon: true,
-        restart: false,
+        restart_policy: RestartPolicy::None,
         restart_backoff: 1,
         success_exit_codes: vec![0],
         start_wait_secs: 0,

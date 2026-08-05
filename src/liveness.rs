@@ -132,12 +132,14 @@ mod tests {
     use std::net::TcpListener;
     use std::thread;
 
+    use crate::config::RestartPolicy;
+
     fn cfg() -> ServiceConfig {
         ServiceConfig {
             name: "t".into(),
             enabled: true,
             daemon: false,
-            restart: false,
+            restart_policy: RestartPolicy::None,
             restart_backoff: 1,
             success_exit_codes: vec![0],
             start_wait_secs: 0,

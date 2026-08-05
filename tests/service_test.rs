@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use microinit::config::ServiceConfig;
+use microinit::config::{RestartPolicy, ServiceConfig};
 use microinit::service::*;
 
 fn cfg() -> ServiceConfig {
@@ -10,7 +10,7 @@ fn cfg() -> ServiceConfig {
         name: "t".into(),
         enabled: true,
         daemon: false,
-        restart: false,
+        restart_policy: RestartPolicy::None,
         restart_backoff: 2,
         success_exit_codes: vec![0],
         start_wait_secs: 0,

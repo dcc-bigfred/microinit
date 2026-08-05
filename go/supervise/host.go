@@ -21,6 +21,9 @@ import (
 const (
 	defaultReadyTimeout    = 10 * time.Second
 	defaultShutdownTimeout = 15 * time.Second
+	// hardKillGrace is how long to wait after SIGTERM to the process group
+	// before escalating to SIGKILL, within the overall ShutdownTimeout budget.
+	hardKillGrace = 5 * time.Second
 	// spawnLogCap bounds the captured stdout/stderr of the spawned microinit
 	// process so a chatty daemon cannot exhaust memory on embedded hosts.
 	spawnLogCap = 256 * 1024
@@ -34,6 +37,9 @@ type Host struct {
 	// DropinDir is created during EnsureRunning when set (microinit loads it
 	// from the config directory layout; callers still write drop-ins themselves).
 	DropinDir string
+	// PidFile is written after a successful spawn (pid + /proc starttime) so
+	// embedders can reap orphans safely. Empty defaults to <socket-dir>/microinit.pid.
+	PidFile string
 
 	// ReadyTimeout waits for IPC after spawn (default 10s).
 	ReadyTimeout time.Duration
@@ -138,6 +144,11 @@ func (h *Host) EnsureRunning(ctx context.Context) (joined bool, err error) {
 	if err := cmd.Start(); err != nil {
 		return false, fmt.Errorf("start microinit (%s --socket %s supervise --config %s): %w", h.Bin, h.Socket, h.ConfigPath, err)
 	}
+	if err := h.writePidFile(cmd.Process.Pid); err != nil {
+		_ = signalProcessGroup(cmd, syscall.SIGKILL)
+		_, _ = cmd.Process.Wait()
+		return false, fmt.Errorf("write microinit pid file: %w", err)
+	}
 	waitCh := make(chan error, 1)
 	go func() { waitCh <- cmd.Wait() }()
 	h.cmd, h.spawned, h.waitCh = cmd, true, waitCh
@@ -160,6 +171,7 @@ func (h *Host) EnsureRunning(ctx context.Context) (joined bool, err error) {
 			return false, fmt.Errorf("microinit startup cancelled: %w", h.terminateSoft(ctx, cmd, waitCh, logBuf))
 		case waitErr := <-waitCh:
 			h.spawned, h.cmd, h.waitCh = false, nil, nil
+			h.removePidFile()
 			detail := strings.TrimSpace(logBuf.String())
 			if detail == "" {
 				detail = fmt.Sprintf("exit: %v", waitErr)
@@ -173,40 +185,35 @@ func (h *Host) EnsureRunning(ctx context.Context) (joined bool, err error) {
 	}
 }
 
-// terminateSoft sends SIGTERM to the spawned microinit and waits for it to
-// exit gracefully (up to ShutdownTimeout), then escalates to SIGKILL. Used
-// when ctx is cancelled during startup.
+// terminateSoft sends SIGTERM to the spawned microinit process group and waits
+// for it to exit gracefully (up to ShutdownTimeout), then escalates to SIGKILL.
+// Used when ctx is cancelled during startup.
 func (h *Host) terminateSoft(ctx context.Context, cmd *exec.Cmd, waitCh <-chan error, logBuf *boundedBuffer) error {
 	timeout := h.shutdownTimeout()
-	if cmd.Process != nil {
-		_ = cmd.Process.Signal(syscall.SIGTERM)
-	}
+	_ = signalProcessGroup(cmd, syscall.SIGTERM)
 	select {
 	case <-waitCh:
+		h.removePidFile()
 		return ctx.Err()
 	case <-time.After(timeout):
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
-		}
+		_ = signalProcessGroup(cmd, syscall.SIGKILL)
 		<-waitCh
+		h.removePidFile()
 		return fmt.Errorf("%w (microinit did not exit after SIGTERM within %s)", ctx.Err(), timeout)
 	}
 }
 
-// softKillDetail SIGTERM-waits then SIGKILLs and returns the captured log.
+// softKillDetail SIGTERM-waits then SIGKILLs the process group and returns the captured log.
 func (h *Host) softKillDetail(cmd *exec.Cmd, waitCh <-chan error, logBuf *boundedBuffer) string {
 	timeout := h.shutdownTimeout()
-	if cmd.Process != nil {
-		_ = cmd.Process.Signal(syscall.SIGTERM)
-	}
+	_ = signalProcessGroup(cmd, syscall.SIGTERM)
 	select {
 	case <-waitCh:
 	case <-time.After(timeout):
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
-		}
+		_ = signalProcessGroup(cmd, syscall.SIGKILL)
 		<-waitCh
 	}
+	h.removePidFile()
 	detail := strings.TrimSpace(logBuf.String())
 	if detail == "" {
 		detail = fmt.Sprintf("killed after %s", timeout)
@@ -218,7 +225,8 @@ func (h *Host) softKillDetail(cmd *exec.Cmd, waitCh <-chan error, logBuf *bounde
 // When EnsureRunning joined an existing daemon, this is a no-op.
 // Callers that need to stop their own services must do so themselves first.
 //
-// Sequence: IPC Shutdown (halt) → SIGTERM → wait ShutdownTimeout → SIGKILL.
+// Sequence within ShutdownTimeout (default 15s): IPC halt → wait → SIGTERM to
+// the process group → wait remaining budget (capped) → SIGKILL to the group.
 func (h *Host) Shutdown(ctx context.Context) error {
 	h.mu.Lock()
 	spawned, cmd, waitCh := h.spawned, h.cmd, h.waitCh
@@ -226,6 +234,12 @@ func (h *Host) Shutdown(ctx context.Context) error {
 	if !spawned || cmd == nil || cmd.Process == nil {
 		return nil
 	}
+	timeout := h.shutdownTimeout()
+	deadline := time.Now().Add(timeout)
+	if dl, ok := ctx.Deadline(); ok && dl.Before(deadline) {
+		deadline = dl
+	}
+
 	// Ask microinit to stop its services and exit cleanly.
 	_ = h.client.Shutdown()
 	if waitCh == nil {
@@ -233,14 +247,17 @@ func (h *Host) Shutdown(ctx context.Context) error {
 		go func() { done <- cmd.Wait() }()
 		waitCh = done
 	}
-	timeout := h.shutdownTimeout()
+	remaining := time.Until(deadline)
+	if remaining < 0 {
+		remaining = 0
+	}
 	select {
 	case <-ctx.Done():
-		h.terminateHard(cmd, waitCh)
+		h.terminateHard(cmd, waitCh, time.Until(deadline))
 		h.clearSpawn()
 		return ctx.Err()
-	case <-time.After(timeout):
-		h.terminateHard(cmd, waitCh)
+	case <-time.After(remaining):
+		h.terminateHard(cmd, waitCh, hardKillGrace)
 		h.clearSpawn()
 		return fmt.Errorf("microinit shutdown timed out (socket %s)", h.Socket)
 	case <-waitCh:
@@ -249,18 +266,85 @@ func (h *Host) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-func (h *Host) terminateHard(cmd *exec.Cmd, waitCh <-chan error) {
-	if cmd.Process != nil {
-		_ = cmd.Process.Signal(syscall.SIGTERM)
+func (h *Host) terminateHard(cmd *exec.Cmd, waitCh <-chan error, grace time.Duration) {
+	_ = signalProcessGroup(cmd, syscall.SIGTERM)
+	if grace <= 0 {
+		grace = hardKillGrace
 	}
 	select {
 	case <-waitCh:
-	case <-time.After(5 * time.Second):
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
-		}
+	case <-time.After(grace):
+		_ = signalProcessGroup(cmd, syscall.SIGKILL)
 		<-waitCh
 	}
+}
+
+// signalProcessGroup delivers sig to the process group of cmd (Setpgid).
+// Falls back to signaling the process itself when the group kill fails.
+func signalProcessGroup(cmd *exec.Cmd, sig syscall.Signal) error {
+	if cmd == nil || cmd.Process == nil {
+		return nil
+	}
+	pid := cmd.Process.Pid
+	if err := syscall.Kill(-pid, sig); err != nil {
+		return cmd.Process.Signal(sig)
+	}
+	return nil
+}
+
+func (h *Host) pidFilePath() string {
+	if h.PidFile != "" {
+		return h.PidFile
+	}
+	dir := filepath.Dir(h.Socket)
+	if dir == "" || dir == "." {
+		dir = "."
+	}
+	return filepath.Join(dir, "microinit.pid")
+}
+
+func (h *Host) writePidFile(pid int) error {
+	path := h.pidFilePath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	starttime, err := procStartTime(pid)
+	if err != nil {
+		// Best-effort: still write the PID so orphan cleanup has something.
+		starttime = 0
+	}
+	content := fmt.Sprintf("%d\n%d\n", pid, starttime)
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(content), 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+func (h *Host) removePidFile() {
+	_ = os.Remove(h.pidFilePath())
+}
+
+// procStartTime reads field 22 (starttime) from /proc/<pid>/stat.
+func procStartTime(pid int) (uint64, error) {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return 0, err
+	}
+	// Format: pid (comm) state ppid ... — comm may contain spaces/parens.
+	s := string(data)
+	idx := strings.LastIndex(s, ") ")
+	if idx < 0 {
+		return 0, fmt.Errorf("parse /proc/%d/stat: no comm", pid)
+	}
+	fields := strings.Fields(s[idx+2:])
+	// After ") ": field[0]=state (stat field 3). starttime is field 22 → index 19.
+	if len(fields) < 20 {
+		return 0, fmt.Errorf("parse /proc/%d/stat: too few fields", pid)
+	}
+	var starttime uint64
+	_, err = fmt.Sscanf(fields[19], "%d", &starttime)
+	return starttime, err
 }
 
 func (h *Host) shutdownTimeout() time.Duration {
@@ -271,6 +355,7 @@ func (h *Host) shutdownTimeout() time.Duration {
 }
 
 func (h *Host) clearSpawn() {
+	h.removePidFile()
 	h.mu.Lock()
 	h.spawned, h.cmd, h.waitCh = false, nil, nil
 	h.mu.Unlock()
@@ -316,6 +401,7 @@ func newBoundedBuffer(cap int) *boundedBuffer {
 func (b *boundedBuffer) Write(p []byte) (int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	n := len(p)
 	for len(p) > 0 {
 		free := b.cap - len(b.buf)
 		if b.full {
@@ -332,12 +418,12 @@ func (b *boundedBuffer) Write(p []byte) (int, error) {
 			break
 		}
 		// Buffer full: wrap around and overwrite oldest.
-		n := copy(b.buf[b.pos:], p)
-		b.pos = (b.pos + n) % b.cap
-		p = p[n:]
+		copied := copy(b.buf[b.pos:], p)
+		b.pos = (b.pos + copied) % b.cap
+		p = p[copied:]
 		b.full = true
 	}
-	return len(p), nil
+	return n, nil
 }
 
 func (b *boundedBuffer) String() string {

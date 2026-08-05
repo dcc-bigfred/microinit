@@ -193,10 +193,9 @@ func (c *Client) Shutdown() error {
 // lines < 0 uses the server default buffer size; lines >= 0 requests exactly
 // that many historical lines (0 = live-only, no snapshot).
 //
-// A read deadline is applied: each frame must arrive within ReadTimeout
-// (default 30s). Follow=true resets the deadline per frame so a quiet but
-// live service does not trip the deadline; the caller detects a dead server
-// via io.EOF. Pass a custom ReadTimeout via Client.ReadTimeout to tune this.
+// Prefer [Client.ReadFrame] for follow streams: it enforces a per-frame idle
+// deadline (default 30s) and skips server heartbeats so a quiet but live
+// service does not time out.
 func (c *Client) FollowLogs(name string, lines int, follow bool) (net.Conn, error) {
 	if name != "" {
 		if err := ValidateName(name); err != nil {
@@ -220,8 +219,6 @@ func (c *Client) FollowLogs(name string, lines int, follow bool) (net.Conn, erro
 		_ = conn.Close()
 		return nil, err
 	}
-	// Reset the dial deadline; the per-frame deadline is enforced by
-	// ReadResponse via setReadDeadline.
 	_ = conn.SetDeadline(time.Time{})
 	return conn, nil
 }
@@ -240,16 +237,20 @@ func ReadResponse(r io.Reader) (Response, error) {
 
 // ReadFrame reads one framed response from a streaming connection and
 // enforces a per-frame idle read deadline (Client.ReadTimeout, default 30s).
-// Use this for FollowLogs streams so a dead server is detected within the
-// timeout instead of blocking forever. The deadline is reset before each
-// frame, so a quiet-but-live service does not trip it.
+// Server heartbeats (type "heartbeat") are skipped so a quiet-but-live
+// follow stream stays open; a dead server is detected via deadline or EOF.
 func (c *Client) ReadFrame(conn net.Conn) (Response, error) {
-	_ = conn.SetReadDeadline(time.Now().Add(c.readTimeout()))
-	var resp Response
-	if err := readFrame(conn, &resp); err != nil {
-		return Response{}, err
+	for {
+		_ = conn.SetReadDeadline(time.Now().Add(c.readTimeout()))
+		var resp Response
+		if err := readFrame(conn, &resp); err != nil {
+			return Response{}, err
+		}
+		if resp.Type == "heartbeat" {
+			continue
+		}
+		return resp, nil
 	}
-	return resp, nil
 }
 
 // FormatLogLine renders a LogLine for console / UI output.
@@ -297,11 +298,26 @@ func writeFrame(w io.Writer, msg any) error {
 	}
 	var hdr [4]byte
 	binary.LittleEndian.PutUint32(hdr[:], uint32(len(payload)))
-	if _, err := w.Write(hdr[:]); err != nil {
+	if err := writeFull(w, hdr[:]); err != nil {
 		return err
 	}
-	_, err = w.Write(payload)
-	return err
+	return writeFull(w, payload)
+}
+
+func writeFull(w io.Writer, p []byte) error {
+	for len(p) > 0 {
+		n, err := w.Write(p)
+		if n > 0 {
+			p = p[n:]
+		}
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return io.ErrShortWrite
+		}
+	}
+	return nil
 }
 
 func readFrame(r io.Reader, dest any) error {
@@ -313,17 +329,13 @@ func readFrame(r io.Reader, dest any) error {
 	if n > maxFrameBytes {
 		return fmt.Errorf("frame length %d too large", n)
 	}
-	// Stream-decode without pre-allocating the full payload: LimitReader caps
-	// the bytes consumed, and json.Decoder grows its internal buffer on demand
-	// rather than reserving n bytes up front. A malicious/buggy server claiming
-	// a huge frame therefore cannot force a 16 MiB allocation in one shot.
-	// microinit frames are exactly the JSON payload with no trailing padding,
-	// so the decoder consumes the whole window and leaves nothing behind.
-	dec := json.NewDecoder(io.LimitReader(r, int64(n)))
-	if err := dec.Decode(dest); err != nil {
+	// Read exactly n bytes so the next frame stays aligned, then decode.
+	// Size is capped by maxFrameBytes above.
+	buf := make([]byte, n)
+	if _, err := io.ReadFull(r, buf); err != nil {
 		return err
 	}
-	return nil
+	return json.Unmarshal(buf, dest)
 }
 
 // responseError maps an IPC error response to a typed error. It prefers the

@@ -141,7 +141,7 @@ func main() {
 		Name:     "worker",
 		Enabled:  config.BoolPtr(true),
 		Daemon:   config.BoolPtr(true),
-		Restart:  config.BoolPtr(true),
+		RestartPolicy: config.RestartOnError,
 		StartCmd: "exec /usr/bin/my-worker",
 	}, "my-app"))
 

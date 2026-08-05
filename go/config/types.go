@@ -5,7 +5,8 @@ type ServiceDef struct {
 	Name             string            `json:"name"`
 	Enabled          *bool             `json:"enabled,omitempty"`
 	Daemon           *bool             `json:"daemon,omitempty"`
-	Restart          *bool             `json:"restart,omitempty"`
+	// RestartPolicy is "always", "onError" (default), or "none".
+	RestartPolicy    string            `json:"restartPolicy,omitempty"`
 	RestartBackoff   *int              `json:"restartBackoff,omitempty"`
 	StartWaitSecs    *int              `json:"startWaitSecs,omitempty"`
 	ShutdownWaitSecs *int              `json:"shutdownWaitSecs,omitempty"`
@@ -17,6 +18,13 @@ type ServiceDef struct {
 	LivenessProbe    *LivenessProbe    `json:"livenessProbe,omitempty"`
 	Labels           map[string]string `json:"labels,omitempty"`
 }
+
+// Restart policy values for ServiceDef.RestartPolicy.
+const (
+	RestartAlways  = "always"
+	RestartOnError = "onError"
+	RestartNone    = "none"
+)
 
 // LivenessProbe mirrors microinit JSON probe fields.
 type LivenessProbe struct {

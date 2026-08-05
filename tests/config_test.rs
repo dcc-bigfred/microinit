@@ -11,7 +11,7 @@ fn minimal_svc(name: &str) -> ServiceConfig {
         name: name.into(),
         enabled: true,
         daemon: true,
-        restart: false,
+        restart_policy: RestartPolicy::None,
         restart_backoff: 2,
         success_exit_codes: vec![0],
         start_wait_secs: 0,
@@ -50,7 +50,7 @@ fn resolve_cmd_fallback() {
         name: "x".into(),
         enabled: true,
         daemon: true,
-        restart: false,
+        restart_policy: RestartPolicy::None,
         restart_backoff: 2,
         success_exit_codes: vec![0],
         start_wait_secs: 0,
@@ -77,7 +77,7 @@ fn resolve_explicit_cmds_prefer_over_cmd() {
         name: "x".into(),
         enabled: true,
         daemon: true,
-        restart: false,
+        restart_policy: RestartPolicy::None,
         restart_backoff: 2,
         success_exit_codes: vec![0],
         start_wait_secs: 0,
@@ -104,7 +104,7 @@ fn resolve_restart_falls_back_to_stop_and_start() {
         name: "x".into(),
         enabled: true,
         daemon: true,
-        restart: false,
+        restart_policy: RestartPolicy::None,
         restart_backoff: 2,
         success_exit_codes: vec![0],
         start_wait_secs: 0,
@@ -129,7 +129,7 @@ fn resolve_start_errors_without_cmds() {
         name: "x".into(),
         enabled: true,
         daemon: true,
-        restart: false,
+        restart_policy: RestartPolicy::None,
         restart_backoff: 2,
         success_exit_codes: vec![0],
         start_wait_secs: 0,
@@ -201,7 +201,7 @@ fn validate_rejects_restart_without_daemon() {
     let mut cfg = Config::default();
     let mut s = minimal_svc("job");
     s.daemon = false;
-    s.restart = true;
+    s.restart_policy = RestartPolicy::Always;
     cfg.services.push(s);
     assert!(cfg.validate().is_err());
 }
@@ -414,7 +414,7 @@ fn rejects_empty_liveness_probe_cmd() {
     let mut cfg = Config::default();
     let mut svc = minimal_svc("net");
     svc.daemon = false;
-    svc.restart = false;
+    svc.restart_policy = RestartPolicy::None;
     svc.liveness_probe = Some(LivenessProbe {
         cmd: Some("  ".into()),
         http_url: None,

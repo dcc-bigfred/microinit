@@ -185,6 +185,41 @@ impl LivenessProbe {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+#[non_exhaustive]
+pub enum RestartPolicy {
+    /// Restart on every exit, including success (exit 0 / successExitCodes).
+    Always,
+    /// Restart only on non-success exits (default).
+    #[default]
+    OnError,
+    /// Never auto-restart.
+    None,
+}
+
+impl RestartPolicy {
+    /// Whether an exit with the given success classification should trigger a restart.
+    #[must_use]
+    pub fn should_restart(self, success: bool) -> bool {
+        match self {
+            Self::Always => true,
+            Self::OnError => !success,
+            Self::None => false,
+        }
+    }
+
+    /// Policies other than [`Self::None`] require `daemon=true`.
+    #[must_use]
+    pub fn requires_daemon(self) -> bool {
+        !matches!(self, Self::None)
+    }
+}
+
+fn default_restart_policy() -> RestartPolicy {
+    RestartPolicy::OnError
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ServiceConfig {
@@ -193,8 +228,10 @@ pub struct ServiceConfig {
     pub enabled: bool,
     #[serde(default = "default_true")]
     pub daemon: bool,
-    #[serde(default)]
-    pub restart: bool,
+    /// Auto-restart policy. Replaces the former `restart` bool
+    /// (`true` → `onError`, `false` → `none`).
+    #[serde(default = "default_restart_policy")]
+    pub restart_policy: RestartPolicy,
     #[serde(default = "default_backoff")]
     pub restart_backoff: u64,
     #[serde(default = "default_success_codes")]
@@ -437,9 +474,9 @@ impl Config {
                     svc.name
                 )));
             }
-            if svc.restart && !svc.daemon {
+            if matches!(svc.restart_policy, RestartPolicy::Always) && !svc.daemon {
                 return Err(Error::Config(format!(
-                    "service '{}': restart=true requires daemon=true",
+                    "service '{}': restartPolicy=always requires daemon=true",
                     svc.name
                 )));
             }
@@ -676,7 +713,7 @@ pub fn example_config() -> Config {
                 name: "network".into(),
                 enabled: true,
                 daemon: false,
-                restart: false,
+                restart_policy: RestartPolicy::None,
                 restart_backoff: 2,
                 success_exit_codes: vec![0],
                 start_wait_secs: 0,
@@ -705,7 +742,7 @@ pub fn example_config() -> Config {
                 name: "redis".into(),
                 enabled: true,
                 daemon: true,
-                restart: true,
+                restart_policy: RestartPolicy::OnError,
                 restart_backoff: 2,
                 success_exit_codes: vec![0],
                 start_wait_secs: 0,
@@ -725,7 +762,7 @@ pub fn example_config() -> Config {
                 name: "remote-icmp".into(),
                 enabled: true,
                 daemon: true,
-                restart: true,
+                restart_policy: RestartPolicy::OnError,
                 restart_backoff: 5,
                 success_exit_codes: vec![0],
                 start_wait_secs: 0,

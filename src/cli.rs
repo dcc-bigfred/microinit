@@ -399,6 +399,7 @@ pub fn cmd_logs(
                 writeln!(out, "[{}] {}: {}", line.ts, line.service, line.msg)?;
                 out.flush()?;
             }
+            Response::Heartbeat => {}
             Response::Ok { .. } => break,
             Response::Error { message, .. } => return Err(Error::Ipc(message)),
             other => return Err(Error::Ipc(format!("unexpected: {other:?}"))),

@@ -94,7 +94,7 @@ Minimal long-running service (foreground binary — preferred so microinit can t
   "name": "myapp",
   "enabled": true,
   "daemon": true,
-  "restart": true,
+  "restartPolicy": "onError",
   "restartBackoff": 2,
   "startWaitSecs": 1,
   "shutdownWaitSecs": 5,
@@ -117,14 +117,14 @@ Or set explicit commands:
 "stopCmd": "killall myapp"
 ```
 
-If `startCmd` is set, it is used instead of `cmd start`. Prefer **`exec` of the real process in the foreground** in the start script so `killall` / crashes are visible to microinit and `restart: true` works.
+If `startCmd` is set, it is used instead of `cmd start`. Prefer **`exec` of the real process in the foreground** in the start script so `killall` / crashes are visible to microinit and `restartPolicy` works.
 
 ### Important fields (plain language)
 
 | Field | Role |
 |-------|------|
 | `daemon` | `true` = long-lived; `false` = one-shot job |
-| `restart` | Restart after crash (daemons only) |
+| `restartPolicy` | `always` / `onError` (default) / `none` — auto-restart (daemons only) |
 | `restartBackoff` | Seconds to wait before restarting |
 | `startWaitSecs` | After start, wait this long; if the process dies in that window → `failed`. Use `1` (or more) when the start command **stays** as the service process |
 | `shutdownWaitSecs` | After stop, wait then `SIGKILL` |
@@ -244,7 +244,7 @@ Edit `/data/etc/microinit.json` (or a drop-in), save — wait a moment for reloa
 
 **Service dies and stays dead**
 
-Check `restart: true` and that microinit is tracking a real PID (`list` shows a PID). Scripts that background with `start-stop-daemon -b` and exit leave microinit thinking the service is fine with no PID — prefer foreground `exec`.
+Check `restartPolicy` and that microinit is tracking a real PID (`list` shows a PID). Scripts that background with `start-stop-daemon -b` and exit leave microinit thinking the service is fine with no PID — prefer foreground `exec`.
 
 ---
 

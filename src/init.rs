@@ -385,14 +385,27 @@ fn handle_ipc(
             }
             if follow {
                 let rx = hub.subscribe();
-                while let Ok(line) = rx.recv() {
-                    if let Some(ref nme) = name {
-                        if &line.service != nme {
-                            continue;
+                // Heartbeats keep Go/UI clients with idle read deadlines alive
+                // when a service is healthy but quiet.
+                const HEARTBEAT: std::time::Duration = std::time::Duration::from_secs(10);
+                loop {
+                    match rx.recv_timeout(HEARTBEAT) {
+                        Ok(line) => {
+                            if let Some(ref nme) = name {
+                                if &line.service != nme {
+                                    continue;
+                                }
+                            }
+                            if write_frame(stream, &Response::Log { line }).is_err() {
+                                break;
+                            }
                         }
-                    }
-                    if write_frame(stream, &Response::Log { line }).is_err() {
-                        break;
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                            if write_frame(stream, &Response::Heartbeat).is_err() {
+                                break;
+                            }
+                        }
+                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
                     }
                 }
             } else {

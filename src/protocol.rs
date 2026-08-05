@@ -246,4 +246,7 @@ pub enum Response {
     Log {
         line: LogLine,
     },
+    /// Keepalive on follow log streams so clients with idle read deadlines
+    /// do not disconnect a quiet but healthy service.
+    Heartbeat,
 }
