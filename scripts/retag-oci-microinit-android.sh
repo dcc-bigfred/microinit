@@ -45,6 +45,10 @@ if [[ "${BIN_NAME}" != "libmicroinit.so" ]]; then
   chmod 755 "${tmpdir}/libmicroinit.so"
 fi
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+TAG_COMMIT_SHORT="${TAG_COMMIT:0:7}"
+"${SCRIPT_DIR}/inject-elf-version.sh" "${tmpdir}/libmicroinit.so" "${RELEASE_TAG}" "${TAG_COMMIT_SHORT}"
+
 push_args=(
   "libmicroinit.so:${BIN_MEDIA_TYPE}"
 )
@@ -55,6 +59,7 @@ if [[ -n "${SHUTDOWN_NAME}" ]]; then
     cp -f "${tmpdir}/${SHUTDOWN_NAME}" "${tmpdir}/libshutdown.so"
     chmod 755 "${tmpdir}/libshutdown.so"
   fi
+  "${SCRIPT_DIR}/inject-elf-version.sh" "${tmpdir}/libshutdown.so" "${RELEASE_TAG}" "${TAG_COMMIT_SHORT}"
   push_args+=("libshutdown.so:${SHUTDOWN_MEDIA_TYPE}")
 fi
 

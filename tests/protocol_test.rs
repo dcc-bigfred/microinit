@@ -38,6 +38,7 @@ fn request_response_serde_roundtrip() {
             name: "nginx".into(),
             output: DescribeOutput::Human,
         },
+        Request::Info,
     ];
     for req in cases {
         let json = serde_json::to_string(&req).unwrap();
@@ -45,6 +46,31 @@ fn request_response_serde_roundtrip() {
         let json2 = serde_json::to_string(&back).unwrap();
         assert_eq!(json, json2);
     }
+
+    let info_payload: DaemonInfo = serde_json::from_value(serde_json::json!({
+        "version": "v0.1.0",
+        "tag_commit": "abc1234",
+        "build_commit": "deadbeef",
+        "build_time": "2026-08-05T16:00:00Z",
+        "pid": 1,
+        "hostname": "hub",
+        "uptime_secs": 60,
+        "socket": "/data/run/microinit.sock",
+        "services_total": 2,
+        "services_running": 1,
+        "otel_enabled": true,
+        "otel_endpoint": "http://127.0.0.1:4318",
+        "otel_protocol": "http",
+        "otel_service_name": "microinit",
+        "otel_export_interval_secs": 15,
+    })).unwrap();
+    let info = Response::Info {
+        info: Box::new(info_payload),
+    };
+    let json = serde_json::to_string(&info).unwrap();
+    assert!(json.contains("\"type\":\"info\""));
+    assert!(json.contains("\"otel_enabled\":true"));
+    let _: Response = serde_json::from_str(&json).unwrap();
 
     let resp = Response::Status {
         status: ServiceStatus {

@@ -46,6 +46,11 @@ type Host struct {
 	// ShutdownTimeout waits after Shutdown IPC (default 15s).
 	ShutdownTimeout time.Duration
 
+	// ExtraEnv appends KEY=value entries to the supervised microinit child only
+	// (not the embedder process). Later entries override earlier ones for the
+	// same key.
+	ExtraEnv []string
+
 	client  *client.Client
 	spawned bool
 	cmd     *exec.Cmd
@@ -138,6 +143,7 @@ func (h *Host) EnsureRunning(ctx context.Context) (joined bool, err error) {
 	cmd := exec.Command(h.Bin, "--socket", h.Socket, "supervise", "--config", h.ConfigPath)
 	cmd.Stdout = logBuf
 	cmd.Stderr = logBuf
+	cmd.Env = spawnEnv(h)
 	// Run microinit in its own process group so a SIGTERM to the group reaches
 	// the daemon and (optionally) its tracked children, not the embedder.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -433,6 +439,44 @@ func (b *boundedBuffer) String() string {
 		return string(b.buf)
 	}
 	return string(b.buf[b.pos:]) + string(b.buf[:b.pos])
+}
+
+// spawnEnv returns the child environment, inheriting the parent process and
+// ensuring DATA_DIR is set when only BIGFRED_DATA_DIR is present (Android).
+func spawnEnv(h *Host) []string {
+	env := os.Environ()
+	if os.Getenv("DATA_DIR") == "" {
+		if v := os.Getenv("BIGFRED_DATA_DIR"); v != "" && filepath.IsAbs(v) {
+			env = append(env, "DATA_DIR="+v)
+		}
+	}
+	if len(h.ExtraEnv) == 0 {
+		return env
+	}
+	overrides := make(map[string]string, len(h.ExtraEnv))
+	for _, kv := range h.ExtraEnv {
+		key, val, ok := strings.Cut(kv, "=")
+		if !ok || key == "" {
+			continue
+		}
+		overrides[key] = val
+	}
+	out := make([]string, 0, len(env)+len(overrides))
+	for _, e := range env {
+		key, _, ok := strings.Cut(e, "=")
+		if !ok {
+			out = append(out, e)
+			continue
+		}
+		if _, overridden := overrides[key]; overridden {
+			continue
+		}
+		out = append(out, e)
+	}
+	for key, val := range overrides {
+		out = append(out, key+"="+val)
+	}
+	return out
 }
 
 // Ensure interface compliance.

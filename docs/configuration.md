@@ -83,7 +83,7 @@ You do not have to put every service in one big `microinit.json`. Extra JSON und
 | `logs.tty` | Service logs (init mode) |
 | `logs.initTty` | microinit’s own messages |
 | `logs.logToFiles` | If `true`, also files under `$DATA_DIR/logs/` |
-| `openTelemetry` | Optional metrics (see README) |
+| `openTelemetry` | Optional metrics (see README); also `$DATA_DIR/etc/otel.env` |
 
 Most operators only edit **`services`**.
 

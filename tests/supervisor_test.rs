@@ -12,6 +12,7 @@ use microinit::error::Error;
 use microinit::logs::LogHub;
 use microinit::protocol::ServiceState;
 use microinit::supervisor::*;
+use serial_test::serial;
 
 #[derive(Clone, Default)]
 struct Sink(Arc<Mutex<Vec<u8>>>);
@@ -116,6 +117,36 @@ fn make_sup(services: Vec<ServiceConfig>) -> (Arc<Supervisor>, std::path::PathBu
         dropins,
     );
     (sup, dir)
+}
+
+#[test]
+#[serial]
+fn info_reports_services_and_otel() {
+    // Isolate from sibling tests that touch ENABLE_TELEMETRY.
+    std::env::remove_var("ENABLE_TELEMETRY");
+    std::env::remove_var("OTEL_EXPORTER_OTLP_ENDPOINT");
+    std::env::remove_var("OTEL_SDK_DISABLED");
+
+    let (sup, dir) = make_sup(vec![
+        job("a", "true", &[], true),
+        job("b", "true", &[], true),
+    ]);
+    let info = sup.info();
+    assert_eq!(info.services_total, 2);
+    assert_eq!(info.services_running, 0);
+    assert!(!info.otel_enabled);
+    assert_eq!(info.version, "dev");
+    assert!(!info.build_commit.is_empty());
+    assert!(info.socket.contains("sock"));
+
+    std::env::set_var("ENABLE_TELEMETRY", "true");
+    std::env::set_var("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:4318");
+    let info2 = sup.info();
+    assert!(info2.otel_enabled);
+    assert_eq!(info2.otel_endpoint, "http://127.0.0.1:4318");
+    std::env::remove_var("ENABLE_TELEMETRY");
+    std::env::remove_var("OTEL_EXPORTER_OTLP_ENDPOINT");
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]

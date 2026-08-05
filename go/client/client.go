@@ -35,6 +35,25 @@ type ServiceStatus struct {
 	Labels           map[string]string `json:"labels,omitempty"`
 }
 
+// DaemonInfo mirrors microinit IPC `info` response.
+type DaemonInfo struct {
+	Version                 string `json:"version"`
+	TagCommit               string `json:"tag_commit"`
+	BuildCommit             string `json:"build_commit"`
+	BuildTime               string `json:"build_time"`
+	PID                     uint32 `json:"pid"`
+	Hostname                string `json:"hostname"`
+	UptimeSecs              uint64 `json:"uptime_secs"`
+	Socket                  string `json:"socket"`
+	ServicesTotal           int    `json:"services_total"`
+	ServicesRunning         int    `json:"services_running"`
+	OtelEnabled             bool   `json:"otel_enabled"`
+	OtelEndpoint            string `json:"otel_endpoint"`
+	OtelProtocol            string `json:"otel_protocol"`
+	OtelServiceName         string `json:"otel_service_name"`
+	OtelExportIntervalSecs  uint64 `json:"otel_export_interval_secs"`
+}
+
 // LogLine is one captured log line from microinit.
 type LogLine struct {
 	TS      string `json:"ts"`
@@ -58,6 +77,7 @@ type Response struct {
 	Code     string          `json:"code,omitempty"`
 	Services []ServiceStatus `json:"services,omitempty"`
 	Status   *ServiceStatus  `json:"status,omitempty"`
+	Info     *DaemonInfo     `json:"info,omitempty"`
 	Line     *LogLine        `json:"line,omitempty"`
 }
 
@@ -122,6 +142,25 @@ func (c *Client) List() ([]ServiceStatus, error) {
 			return []ServiceStatus{}, nil
 		}
 		return resp.Services, nil
+	case "error":
+		return nil, responseError(resp)
+	default:
+		return nil, fmt.Errorf("unexpected response type %q", resp.Type)
+	}
+}
+
+// Info returns the daemon build/runtime snapshot (`microinit info`).
+func (c *Client) Info() (*DaemonInfo, error) {
+	var resp Response
+	if err := c.roundTrip(request{Type: "info"}, &resp); err != nil {
+		return nil, err
+	}
+	switch resp.Type {
+	case "info":
+		if resp.Info == nil {
+			return nil, fmt.Errorf("info response missing payload")
+		}
+		return resp.Info, nil
 	case "error":
 		return nil, responseError(resp)
 	default:

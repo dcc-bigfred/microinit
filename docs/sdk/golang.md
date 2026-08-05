@@ -97,6 +97,9 @@ func main() {
 	for _, s := range list {
 		fmt.Printf("%s %s\n", s.Name, s.State)
 	}
+	if info, err := c.Info(); err == nil {
+		fmt.Printf("microinit %s build %s\n", info.Version, info.BuildCommit)
+	}
 	if err := c.Control("redis", "restart"); err != nil {
 		log.Fatal(err)
 	}

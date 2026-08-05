@@ -146,6 +146,13 @@ pub fn run(opts: InitOpts) -> Result<()> {
     // may seed/update `microinit.json`, drop-ins, and the enabled-override.
     let mut cfg = load_config_after_early_boot(&opts)?;
 
+    if let Err(e) = crate::otelenv::load_default() {
+        boot_note(
+            init_logs_preview,
+            &format!("otel.env load failed (continuing): {e}"),
+        );
+    }
+
     let logs_tty = if opts.logs_tty != DEFAULT_LOGS_TTY {
         opts.logs_tty.clone()
     } else {
@@ -408,6 +415,14 @@ fn handle_ipc(
             )?,
             Err(e) => write_frame(stream, &error_response(&e))?,
         },
+        Request::Info => {
+            write_frame(
+                stream,
+                &Response::Info {
+                    info: Box::new(supervisor.info()),
+                },
+            )?;
+        }
         Request::Start { name, force } => {
             respond_start(stream, supervisor.start_service(&name, force))?;
         }

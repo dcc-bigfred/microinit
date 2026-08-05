@@ -39,6 +39,49 @@ Unknown fields should be ignored by clients where possible; the server may add f
 
 **Response:** `list` with all services.
 
+### `info`
+
+Daemon build/runtime snapshot: version (ELF release section or `dev`), build commit/time, hostname, uptime, service counts, effective OpenTelemetry settings.
+
+```json
+{ "type": "info" }
+```
+
+**Response:** `info` with a `DaemonInfo` object:
+
+| Field | Description |
+|-------|-------------|
+| `version` | Release tag from ELF `.microinit.version`, or `dev` |
+| `tag_commit` | Commit of the release tag (ELF) |
+| `build_commit` | CI / build-time git SHA |
+| `build_time` | UTC build timestamp (ISO-8601) |
+| `pid` | microinit process ID |
+| `hostname` | Host name |
+| `uptime_secs` | Seconds since supervisor start |
+| `socket` | IPC socket path |
+| `services_total` | Registered services |
+| `services_running` | Services in `running` state |
+| `otel_enabled` | Effective telemetry on/off |
+| `otel_endpoint` | OTLP HTTP URL used by microinit |
+| `otel_protocol` | Exporter protocol (`http`, etc.) |
+| `otel_service_name` | `OTEL_SERVICE_NAME` |
+| `otel_export_interval_secs` | Metric export interval (seconds) |
+
+These `otel_*` fields mirror the effective `openTelemetry` block in
+`microinit.json` after overlaying process environment and
+`$DATA_DIR/etc/otel.env` (same precedence as runtime export). JSON config keys:
+
+| `openTelemetry` (JSON) | Env / IPC |
+|------------------------|-----------|
+| `enable` | `ENABLE_TELEMETRY`, `OTEL_SDK_DISABLED` (disable only) → `otel_enabled` |
+| `endpoint` | `OTEL_EXPORTER_OTLP_ENDPOINT` → `otel_endpoint` |
+| `protocol` | `OTEL_EXPORTER_OTLP_PROTOCOL` → `otel_protocol` |
+| `serviceName` | `OTEL_SERVICE_NAME` → `otel_service_name` |
+| `exportIntervalSecs` | `OTEL_METRIC_EXPORT_INTERVAL` (ms) → `otel_export_interval_secs` |
+| `headers` | `OTEL_EXPORTER_OTLP_HEADERS` (not shown in `info`) |
+
+CLI `microinit info --json` uses the same snake_case field names as IPC.
+
 ### `status`
 
 ```json

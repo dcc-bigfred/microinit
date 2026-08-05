@@ -118,6 +118,12 @@ enum Commands {
         #[arg(long, short = 'n')]
         lines: Option<usize>,
     },
+    /// Show daemon version, uptime, services, and OpenTelemetry status
+    Info {
+        /// Print DaemonInfo as JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn paths_for_config(config_path: &Path) -> config::Paths {
@@ -271,6 +277,7 @@ fn main() -> ExitCode {
             follow,
             lines,
         } => cli::cmd_logs(&cli.socket, name, follow, lines),
+        Commands::Info { json } => cli::cmd_info(&cli.socket, json),
     };
 
     match result {

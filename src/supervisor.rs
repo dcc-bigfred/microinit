@@ -25,7 +25,7 @@ use crate::graph::{partition_boot, shutdown_order};
 use crate::liveness::{run_probe, ProbeResult};
 use crate::logs::{capture_stream, LogHub, INIT_SERVICE};
 use crate::protocol::{
-    DepNode, LogLevel, ServiceDescribe, ServiceEvent, ServiceEventKind, ServiceSource,
+    DaemonInfo, DepNode, LogLevel, ServiceDescribe, ServiceEvent, ServiceEventKind, ServiceSource,
     ServiceState, ServiceStatus,
 };
 use crate::reaper::{ensure_reaper_thread, global_exits, ExitRegistry};
@@ -285,6 +285,7 @@ pub struct Supervisor {
     dropins_dir: PathBuf,
     exits: Arc<ExitRegistry>,
     ctl: Mutex<HashMap<String, std::sync::mpsc::Sender<CtlMsg>>>,
+    started_at: Instant,
 }
 
 enum CtlMsg {
@@ -321,6 +322,7 @@ impl Supervisor {
             dropins_dir,
             exits: global_exits(),
             ctl: Mutex::new(HashMap::new()),
+            started_at: Instant::now(),
         })
     }
 
@@ -703,9 +705,44 @@ impl Supervisor {
     }
 
     /// Current OpenTelemetry config (for the optional metrics thread).
+    ///
+    /// Starts from JSON `openTelemetry`, then overlays `$DATA_DIR/etc/otel.env`
+    /// and process `OTEL_*` / `ENABLE_TELEMETRY`.
     #[must_use]
     pub fn open_telemetry(&self) -> crate::config::OpenTelemetryConfig {
-        mutex_lock(&self.config).open_telemetry.clone()
+        let base = mutex_lock(&self.config).open_telemetry.clone();
+        crate::otelenv::overlay_config(base)
+    }
+
+    /// Daemon snapshot for `Request::Info` / `microinit info`.
+    #[must_use]
+    pub fn info(&self) -> DaemonInfo {
+        let ver = crate::version::info();
+        let otel = self.open_telemetry();
+        let map = mutex_lock(&self.shared.runtimes);
+        let services_total = map.len();
+        let services_running = map
+            .values()
+            .filter(|rt| matches!(rt.state, ServiceState::Running))
+            .count();
+        let socket = mutex_lock(&self.config).socket.clone();
+        DaemonInfo {
+            version: ver.version,
+            tag_commit: ver.tag_commit,
+            build_commit: ver.build_commit,
+            build_time: ver.build_time,
+            pid: std::process::id(),
+            hostname: crate::version::hostname(),
+            uptime_secs: self.started_at.elapsed().as_secs(),
+            socket,
+            services_total,
+            services_running,
+            otel_enabled: otel.enable,
+            otel_endpoint: otel.endpoint,
+            otel_protocol: otel.protocol,
+            otel_service_name: otel.service_name,
+            otel_export_interval_secs: otel.export_interval_secs,
+        }
     }
 
     /// Snapshot metrics for all known services.

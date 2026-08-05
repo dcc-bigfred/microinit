@@ -160,6 +160,27 @@ pub struct ServiceDescribe {
     pub source: Option<ServiceSource>,
 }
 
+/// Daemon snapshot for `microinit info` / `Request::Info`.
+#[non_exhaustive]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DaemonInfo {
+    pub version: String,
+    pub tag_commit: String,
+    pub build_commit: String,
+    pub build_time: String,
+    pub pid: u32,
+    pub hostname: String,
+    pub uptime_secs: u64,
+    pub socket: String,
+    pub services_total: usize,
+    pub services_running: usize,
+    pub otel_enabled: bool,
+    pub otel_endpoint: String,
+    pub otel_protocol: String,
+    pub otel_service_name: String,
+    pub otel_export_interval_secs: u64,
+}
+
 /// Log stream / severity for a captured line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -254,6 +275,8 @@ pub enum Request {
         follow: bool,
         lines: Option<usize>,
     },
+    /// Daemon build/runtime snapshot (`microinit info`).
+    Info,
     Shutdown {
         mode: ShutdownMode,
     },
@@ -283,6 +306,9 @@ pub enum Response {
     },
     Describe {
         describe: Box<ServiceDescribe>,
+    },
+    Info {
+        info: Box<DaemonInfo>,
     },
     /// One log line in a stream; ends with `Ok` when follow=false and buffer drained.
     Log {

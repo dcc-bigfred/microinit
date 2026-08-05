@@ -6,7 +6,9 @@ use std::path::Path;
 
 use crate::error::{Error, Result};
 use crate::ipc::{read_frame, request, write_frame};
-use crate::protocol::{DepNode, Request, Response, ServiceDescribe, ServiceEvent, ShutdownMode};
+use crate::protocol::{
+    DaemonInfo, DepNode, Request, Response, ServiceDescribe, ServiceEvent, ShutdownMode,
+};
 
 /// Result of parsing SysV-style `shutdown` argv (excluding `--socket`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,6 +66,57 @@ pub fn parse_shutdown_args(
 /// Ask the daemon to begin ordered shutdown (`poweroff` / `reboot` / `halt`).
 pub fn cmd_shutdown(socket: &Path, mode: ShutdownMode) -> Result<()> {
     simple_ok(socket, Request::Shutdown { mode })
+}
+
+/// Show daemon build/runtime info (`microinit info`).
+pub fn cmd_info(socket: &Path, json: bool) -> Result<()> {
+    match request(socket, &Request::Info)? {
+        Response::Info { info } => {
+            if json {
+                println!("{}", serde_json::to_string_pretty(&info).map_err(|e| {
+                    Error::Ipc(format!("serialize info: {e}"))
+                })?);
+            } else {
+                print_daemon_info(&info);
+            }
+            Ok(())
+        }
+        Response::Error { message, .. } => Err(Error::Ipc(message)),
+        other => Err(Error::Ipc(format!("unexpected response: {other:?}"))),
+    }
+}
+
+fn print_daemon_info(info: &DaemonInfo) {
+    let commit = short_commit(&info.tag_commit);
+    let build = short_commit(&info.build_commit);
+    println!("Version:     {}", info.version);
+    println!("Tag commit:  {}", if commit.is_empty() { "-" } else { &commit });
+    print!("Build:       {build}");
+    if !info.build_time.is_empty() {
+        print!(" {}", info.build_time);
+    }
+    println!();
+    println!("PID:         {}", info.pid);
+    println!("Hostname:    {}", info.hostname);
+    println!("Uptime:      {}", format_uptime(Some(info.uptime_secs)));
+    println!("Socket:      {}", info.socket);
+    println!(
+        "Services:    {} total, {} running",
+        info.services_total, info.services_running
+    );
+    println!("OpenTelemetry:");
+    println!(
+        "  Enabled:   {}",
+        if info.otel_enabled { "yes" } else { "no" }
+    );
+    println!("  Endpoint:  {}", info.otel_endpoint);
+    println!("  Protocol:  {}", info.otel_protocol);
+    println!("  Interval:  {}s", info.otel_export_interval_secs);
+    println!("  Service:   {}", info.otel_service_name);
+}
+
+fn short_commit(full: &str) -> String {
+    full.chars().take(7).collect()
 }
 
 pub fn cmd_list(socket: &Path, show_labels: bool, selectors: &[String]) -> Result<()> {

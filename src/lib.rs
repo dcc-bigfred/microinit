@@ -31,6 +31,7 @@ pub mod liveness;
 pub mod logs;
 #[cfg(feature = "otel")]
 pub mod otel;
+pub mod otelenv;
 pub mod protocol;
 pub mod reaper;
 #[cfg(not(target_os = "android"))]
@@ -45,5 +46,6 @@ pub mod supervisor;
 pub mod syncutil;
 #[cfg(feature = "init")]
 pub mod unmount;
+pub mod version;
 
 pub use error::{Error, Result};

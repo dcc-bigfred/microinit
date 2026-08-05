@@ -113,6 +113,11 @@ build_one() {
   export "${cc_env}=${linker}"
   export "${ar_env}=llvm-ar"
 
+  if [[ -n "${GITHUB_SHA:-}" ]]; then
+    export MICROINIT_GIT_COMMIT="${MICROINIT_GIT_COMMIT:-${GITHUB_SHA}}"
+  fi
+  export MICROINIT_BUILD_TIME="${MICROINIT_BUILD_TIME:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
+
   # Supervise-only: no early-boot / getty / reboot (see Cargo feature `init`).
   # Optional OTel: MICROINIT_ANDROID_OTEL=1 ./scripts/build-android.sh …
   local features=()

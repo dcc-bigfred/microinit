@@ -30,6 +30,8 @@ The control socket defaults to `$DATA_DIR/run/microinit.sock` (hub: `/data/run/m
 microinit list                          # name, state, pid, restarts, enabled, live_fail
 microinit list --show-labels            # same + LABELS column
 microinit list -l created-by=bigfred    # filter (AND if -l repeated)
+microinit info                          # version, uptime, services, OpenTelemetry
+microinit info --json                   # same as JSON
 microinit describe redis                # deps, reverse deps, graph, recent events
 microinit start redis
 microinit start --force alloy      # start even if dependsOn are not ready
@@ -67,6 +69,7 @@ Full example with restarts: [Service lifecycle](service-lifecycle.md).
 | Main list | `$DATA_DIR/etc/microinit.json` |
 | Enable/disable override | `$DATA_DIR/etc/microinit.services.enabled-override.json` |
 | Extra services | `$DATA_DIR/etc/microinit.d/services/**/*.json` |
+| OpenTelemetry env | `$DATA_DIR/etc/otel.env` (optional dotenv; see README) |
 
 Edit JSON, **save** — hot reload (no reboot in most cases). Invalid JSON is ignored.
 

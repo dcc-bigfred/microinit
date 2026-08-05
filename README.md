@@ -81,7 +81,7 @@ service / init logs.
 
 ## OpenTelemetry → Grafana Alloy
 
-Default builds include the OTLP exporter. Enable it at runtime in config:
+Default builds include the OTLP exporter. Enable it at runtime in JSON:
 
 ```json
 "openTelemetry": {
@@ -92,6 +92,21 @@ Default builds include the OTLP exporter. Enable it at runtime in config:
   "exportIntervalSecs": 15
 }
 ```
+
+Or via `$DATA_DIR/etc/otel.env` (shared with BigFred). Process env wins over the
+file; both overlay JSON. Example:
+
+```bash
+# $DATA_DIR/etc/otel.env
+ENABLE_TELEMETRY=true
+OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
+OTEL_EXPORTER_OTLP_PROTOCOL=http
+OTEL_SERVICE_NAME=microinit
+OTEL_METRIC_EXPORT_INTERVAL=15000
+```
+
+Bare `host:4317` (BigFred gRPC style) is mapped to `http://host:4318` for the
+HTTP exporter. Edits to `otel.env` are picked up on the next export cycle.
 
 See [`grafana/alloy/microinit.alloy`](grafana/alloy/microinit.alloy) and
 [`grafana/dashboards/microinit.json`](grafana/dashboards/microinit.json).

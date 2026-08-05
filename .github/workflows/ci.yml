@@ -107,6 +107,8 @@ jobs:
           export ${{ matrix.cc_env }}=musl-gcc
           export ${{ matrix.ar_env }}=ar
           export RUSTFLAGS='-C target-feature=+crt-static'
+          export MICROINIT_GIT_COMMIT="${GITHUB_SHA}"
+          export MICROINIT_BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
           cargo build --release --target ${{ matrix.rust_target }}
 

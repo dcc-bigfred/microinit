@@ -46,6 +46,10 @@ if [[ -z "${BIN_NAME}" ]]; then
   exit 1
 fi
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+TAG_COMMIT_SHORT="${TAG_COMMIT:0:7}"
+"${SCRIPT_DIR}/inject-elf-version.sh" "${tmpdir}/${BIN_NAME}" "${RELEASE_TAG}" "${TAG_COMMIT_SHORT}"
+
 push_args=(
   "${BIN_NAME}:${BIN_MEDIA_TYPE}"
 )
@@ -62,6 +66,7 @@ fi
 
 SHUTDOWN_NAME="$(find_layer shutdown-linux-arm64)" || true
 if [[ -n "${SHUTDOWN_NAME}" ]]; then
+  "${SCRIPT_DIR}/inject-elf-version.sh" "${tmpdir}/${SHUTDOWN_NAME}" "${RELEASE_TAG}" "${TAG_COMMIT_SHORT}"
   push_args+=("${SHUTDOWN_NAME}:${SHUTDOWN_MEDIA_TYPE}")
 fi
 
