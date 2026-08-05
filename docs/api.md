@@ -2,7 +2,7 @@
 
 microinit exposes a **Unix domain stream socket** for control and logs. The CLI (`microinit start`, `list`, `logs`, …) uses this protocol; you can also implement a client in any language.
 
-Default path: **`/run/microinit.sock`** (overridable with `--socket` on both the daemon and clients, or via the `socket` field in JSON config).
+Default path: **`$DATA_DIR/run/microinit.sock`** (hub default **`/data/run/microinit.sock`**; overridable with `--socket` on both the daemon and clients, or via the `socket` field in JSON config). The daemon creates the socket's parent directory if it does not exist.
 
 ---
 
@@ -318,8 +318,8 @@ def call(path, obj):
             data += s.recv(n - len(data))
         return json.loads(data)
 
-print(call("/run/microinit.sock", {"type": "list"}))
-print(call("/run/microinit.sock", {"type": "start", "name": "redis", "force": False}))
+print(call("/data/run/microinit.sock", {"type": "list"}))
+print(call("/data/run/microinit.sock", {"type": "start", "name": "redis", "force": False}))
 ```
 
 For `logs` with `follow: true`, keep reading frames in a loop (each frame has its own 4-byte length prefix).

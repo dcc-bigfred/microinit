@@ -6,7 +6,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use microinit::cli;
 use microinit::config::{
-    self, default_config_path, DEFAULT_INIT_LOGS_TTY, DEFAULT_LOGS_TTY, DEFAULT_SOCKET,
+    self, default_config_path, default_socket_path, DEFAULT_INIT_LOGS_TTY, DEFAULT_LOGS_TTY,
 };
 use microinit::init;
 
@@ -24,8 +24,8 @@ use std::time::Duration;
     long_about = "See microinit(8) for full documentation."
 )]
 struct Cli {
-    /// Path to the control socket (default /run/microinit.sock)
-    #[arg(long, global = true, default_value = DEFAULT_SOCKET)]
+    /// Path to the control socket (default $DATA_DIR/run/microinit.sock)
+    #[arg(long, global = true, default_value_os_t = default_socket_path())]
     socket: PathBuf,
 
     #[command(subcommand)]
@@ -137,7 +137,7 @@ fn default_init_opts(socket: String) -> init::InitOpts {
 #[cfg(feature = "init")]
 fn run_as_pid1() -> ! {
     eprintln!("microinit: running as PID 1 (init)");
-    let opts = default_init_opts(DEFAULT_SOCKET.to_string());
+    let opts = default_init_opts(default_socket_path().display().to_string());
     if let Err(e) = init::run(opts) {
         eprintln!("microinit: fatal: {e}");
     }
@@ -163,7 +163,7 @@ fn main() -> ExitCode {
             #[cfg(feature = "init")]
             if init::should_auto_init() {
                 eprintln!("microinit: CLI parse failed ({e}); falling back to init mode");
-                let opts = default_init_opts(DEFAULT_SOCKET.to_string());
+                let opts = default_init_opts(default_socket_path().display().to_string());
                 return match init::run(opts) {
                     Ok(()) => ExitCode::SUCCESS,
                     Err(err) => {

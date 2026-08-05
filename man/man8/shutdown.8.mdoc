@@ -16,7 +16,7 @@ asks the running
 daemon (PID 1) to stop supervised services in reverse dependency order, run
 the late-unmount script, and then power off, reboot, or halt the machine.
 Communication uses the Unix control socket
-.Pq default Pa /run/microinit.sock .
+.Pq default Pa /data/run/microinit.sock .
 .Pp
 If the socket is missing or the request fails
 .Nm
@@ -39,7 +39,7 @@ Reboot.
 Halt without powering off.
 .It Fl -socket Ar path
 Control socket path (default
-.Pa /run/microinit.sock ).
+.Pa /data/run/microinit.sock ).
 .It Fl -help
 Print usage and exit.
 .El

@@ -109,14 +109,22 @@ pub type Handler = Arc<dyn Fn(Request, &mut UnixStream) -> Result<()> + Send + S
 /// an immediate error response.
 pub fn serve(socket_path: &Path, handler: Handler) -> Result<()> {
     if let Some(parent) = socket_path.parent() {
-        std::fs::create_dir_all(parent)?;
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| Error::io_at(parent, e))?;
+        }
     }
-    let _ = std::fs::remove_file(socket_path);
-    let listener = UnixListener::bind(socket_path)?;
+    match std::fs::remove_file(socket_path) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(Error::io_at(socket_path, e)),
+    }
+    let listener = UnixListener::bind(socket_path).map_err(|e| Error::io_at(socket_path, e))?;
     use std::os::unix::fs::PermissionsExt;
-    let mut perms = std::fs::metadata(socket_path)?.permissions();
+    let mut perms = std::fs::metadata(socket_path)
+        .map_err(|e| Error::io_at(socket_path, e))?
+        .permissions();
     perms.set_mode(0o600);
-    std::fs::set_permissions(socket_path, perms)?;
+    std::fs::set_permissions(socket_path, perms).map_err(|e| Error::io_at(socket_path, e))?;
 
     let path = socket_path.to_path_buf();
     thread::spawn(move || {

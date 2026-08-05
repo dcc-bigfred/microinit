@@ -52,7 +52,7 @@ impl Default for InitOpts {
             log_to_files: false,
             spawn_getty: true,
             attach_ttys: true,
-            socket: crate::config::DEFAULT_SOCKET.to_string(),
+            socket: crate::config::default_socket_path().display().to_string(),
         }
     }
 }

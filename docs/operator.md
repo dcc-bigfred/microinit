@@ -20,7 +20,7 @@ Default durable data lives under **`/data`**. You can point that elsewhere with 
 
 ## Everyday commands
 
-The control socket defaults to `/run/microinit.sock`. Override with `--socket` if needed.
+The control socket defaults to `$DATA_DIR/run/microinit.sock` (hub: `/data/run/microinit.sock`). Override with `--socket` if needed. The daemon creates the parent directory when missing.
 
 ```bash
 microinit list                          # name, state, pid, restarts, enabled, live_fail
