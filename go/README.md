@@ -1,53 +1,43 @@
-# Go client for microinit
+# Go SDK for microinit
 
-IPC client library for the microinit control socket (length-prefixed JSON over Unix domain sockets).
+Module: `github.com/dcc-bigfred/microinit/go`
 
-## Import
+| Package | Import | Role |
+|---------|--------|------|
+| client | `github.com/dcc-bigfred/microinit/go/client` | IPC (list/control/logs) |
+| config | `github.com/dcc-bigfred/microinit/go/config` | ServiceDef + drop-ins |
+| supervise | `github.com/dcc-bigfred/microinit/go/supervise` | Join/spawn daemon in-process |
 
-```go
-import "github.com/dcc-bigfred/microinit/go/client"
+Full guide with examples: **[docs/sdk/golang.md](../docs/sdk/golang.md)**. Developer index: **[docs/developer.md](../docs/developer.md)**.
 
-c := &client.Client{Socket: client.DefaultSocket} // or override
-list, err := c.List()
-```
-
-## Module path / versioning
-
-```
-module github.com/dcc-bigfred/microinit/go
-```
-
-Tag Go releases as **`go/vX.Y.Z`** (required because the module path ends with `/go`), for example:
+## Install
 
 ```bash
-git tag go/v0.1.0
-git push origin go/v0.1.0
+go get github.com/dcc-bigfred/microinit/go@go/v0.2.0
 ```
 
-Then consumers:
-
-```bash
-go get github.com/dcc-bigfred/microinit/go@go/v0.1.0
-```
-
-For local monorepo development:
+Tag Go releases as **`go/vX.Y.Z`**. Private: `GOPRIVATE=github.com/dcc-bigfred/*`.
 
 ```go
-// go.mod
+// local monorepo
 replace github.com/dcc-bigfred/microinit/go => ../microinit/go
 ```
 
-Private repos need `GOPRIVATE=github.com/dcc-bigfred/*`.
+## Quick start
 
-## API
+```go
+import (
+	"github.com/dcc-bigfred/microinit/go/client"
+	"github.com/dcc-bigfred/microinit/go/supervise"
+)
 
-| Method | Description |
-|--------|-------------|
-| `List()` | All services |
-| `Status(name)` | One service |
-| `Control(name, start\|stop\|restart)` | Lifecycle |
-| `Shutdown()` | Halt supervise (caller-owned daemon) |
-| `FollowLogs` / `ReadResponse` | Log stream |
-| `ValidateName` / `FormatLogLine` | Helpers |
+c := &client.Client{Socket: client.DefaultSocket}
+list, err := c.List()
 
-Default socket: `/data/run/microinit.sock` (`client.DefaultSocket`).
+h := supervise.New(socket, "microinit", configPath, dropinDir)
+joined, err := h.EnsureRunning(ctx)
+// … app writes drop-ins / stops its services …
+err = h.Shutdown(ctx) // no-op if joined
+```
+
+Default socket: `/data/run/microinit.sock`.
