@@ -37,21 +37,22 @@ type ServiceStatus struct {
 
 // DaemonInfo mirrors microinit IPC `info` response.
 type DaemonInfo struct {
-	Version                 string `json:"version"`
-	TagCommit               string `json:"tag_commit"`
-	BuildCommit             string `json:"build_commit"`
-	BuildTime               string `json:"build_time"`
-	PID                     uint32 `json:"pid"`
-	Hostname                string `json:"hostname"`
-	UptimeSecs              uint64 `json:"uptime_secs"`
-	Socket                  string `json:"socket"`
-	ServicesTotal           int    `json:"services_total"`
-	ServicesRunning         int    `json:"services_running"`
-	OtelEnabled             bool   `json:"otel_enabled"`
-	OtelEndpoint            string `json:"otel_endpoint"`
-	OtelProtocol            string `json:"otel_protocol"`
-	OtelServiceName         string `json:"otel_service_name"`
-	OtelExportIntervalSecs  uint64 `json:"otel_export_interval_secs"`
+	Version                string `json:"version"`
+	TagCommit              string `json:"tag_commit"`
+	BuildCommit            string `json:"build_commit"`
+	BuildTime              string `json:"build_time"`
+	PID                    uint32 `json:"pid"`
+	Hostname               string `json:"hostname"`
+	UptimeSecs             uint64 `json:"uptime_secs"`
+	Socket                 string `json:"socket"`
+	Mode                   string `json:"mode"` // "init" | "supervise"
+	ServicesTotal          int    `json:"services_total"`
+	ServicesRunning        int    `json:"services_running"`
+	OtelEnabled            bool   `json:"otel_enabled"`
+	OtelEndpoint           string `json:"otel_endpoint"`
+	OtelProtocol           string `json:"otel_protocol"`
+	OtelServiceName        string `json:"otel_service_name"`
+	OtelExportIntervalSecs uint64 `json:"otel_export_interval_secs"`
 }
 
 // LogLine is one captured log line from microinit.
@@ -213,8 +214,20 @@ func (c *Client) Control(name, action string) error {
 // Shutdown requests a halt-mode shutdown (used when stopping a supervise
 // instance started by the caller).
 func (c *Client) Shutdown() error {
+	return c.ShutdownMode("halt")
+}
+
+// ShutdownMode requests a machine/process shutdown with mode reboot|poweroff|halt.
+// In supervise mode microinit ignores the machine power aspect and exits after
+// stopping services; in init mode it finalizes via reboot(2).
+func (c *Client) ShutdownMode(mode string) error {
+	switch mode {
+	case "reboot", "poweroff", "halt":
+	default:
+		return fmt.Errorf("invalid shutdown mode %q (want reboot|poweroff|halt)", mode)
+	}
 	var resp Response
-	if err := c.roundTrip(request{Type: "shutdown", Mode: "halt"}, &resp); err != nil {
+	if err := c.roundTrip(request{Type: "shutdown", Mode: mode}, &resp); err != nil {
 		return err
 	}
 	switch resp.Type {

@@ -56,6 +56,7 @@ fn request_response_serde_roundtrip() {
         "hostname": "hub",
         "uptime_secs": 60,
         "socket": "/data/run/microinit.sock",
+        "mode": "init",
         "services_total": 2,
         "services_running": 1,
         "otel_enabled": true,

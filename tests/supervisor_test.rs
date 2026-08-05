@@ -100,6 +100,7 @@ fn make_sup(services: Vec<ServiceConfig>) -> (Arc<Supervisor>, std::path::PathBu
         },
         socket: dir.join("sock").to_string_lossy().into(),
         console: "/dev/null".into(),
+        socket_allow_users: Vec::new(),
         open_telemetry: Default::default(),
         services,
     };
@@ -115,6 +116,7 @@ fn make_sup(services: Vec<ServiceConfig>) -> (Arc<Supervisor>, std::path::PathBu
         override_path.clone(),
         config_path,
         dropins,
+        microinit::protocol::DaemonMode::Supervise,
     );
     (sup, dir)
 }
@@ -138,6 +140,7 @@ fn info_reports_services_and_otel() {
     assert_eq!(info.version, "dev");
     assert!(!info.build_commit.is_empty());
     assert!(info.socket.contains("sock"));
+    assert_eq!(info.mode, microinit::protocol::DaemonMode::Supervise);
 
     std::env::set_var("ENABLE_TELEMETRY", "true");
     std::env::set_var("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:4318");

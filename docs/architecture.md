@@ -141,7 +141,8 @@ Constraints for a normal Google Play app sandbox:
   notification) — a hidden background daemon violates Play policy.
 - Bind the control socket under **app-private storage** (e.g. `getFilesDir()`), never
   `/run/…`. Pass `--socket` / JSON `socket` accordingly. Same-UID clients only
-  (`SO_PEERCRED` + `0600`).
+  (`SO_PEERCRED`; socket `0600` by default, or `0660` + allowlisted uids when
+  `socketAllowUsers` is set).
 - Service shell is `/system/bin/sh` with an Android `PATH`.
 - Ordered shutdown **stops services, syncs, and exits** — no `reboot(2)` and no
   BusyBox `/sbin/*` fallback.

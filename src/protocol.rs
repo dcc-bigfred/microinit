@@ -160,6 +160,34 @@ pub struct ServiceDescribe {
     pub source: Option<ServiceSource>,
 }
 
+/// Daemon run mode reported by `microinit info` / `Request::Info`.
+///
+/// - `init` — full PID-1 path (`machine_shutdown`); reboot/poweroff/halt finalize
+/// - `supervise` — stop services and exit; machine power modes are ignored
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum DaemonMode {
+    Init,
+    Supervise,
+}
+
+impl DaemonMode {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Init => "init",
+            Self::Supervise => "supervise",
+        }
+    }
+}
+
+impl std::fmt::Display for DaemonMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// Daemon snapshot for `microinit info` / `Request::Info`.
 #[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -172,6 +200,8 @@ pub struct DaemonInfo {
     pub hostname: String,
     pub uptime_secs: u64,
     pub socket: String,
+    /// `init` or `supervise` (from boot opts, not JSON config).
+    pub mode: DaemonMode,
     pub services_total: usize,
     pub services_running: usize,
     pub otel_enabled: bool,

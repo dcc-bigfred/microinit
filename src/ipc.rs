@@ -91,12 +91,24 @@ pub fn request(socket_path: &Path, req: &Request) -> Result<Response> {
     read_frame(&mut stream)
 }
 
-/// Peer credential check: peer uid must match the daemon's uid (root when PID 1).
-fn peer_allowed(stream: &UnixStream) -> bool {
+/// Peer allowlist for the control socket (from `socketAllowUsers`).
+#[derive(Debug, Clone, Default)]
+pub struct IpcAllow {
+    /// Extra uids allowed besides the daemon's own uid.
+    pub allow_uids: Vec<u32>,
+    /// When set with a non-empty allowlist: socket mode `0660`, owner `root:gid`.
+    pub socket_gid: Option<u32>,
+}
+
+/// Peer credential check: daemon uid, or an entry in `allow_uids`.
+fn peer_allowed(stream: &UnixStream, allow_uids: &[u32]) -> bool {
     use nix::sys::socket::{getsockopt, sockopt::PeerCredentials};
     use nix::unistd::Uid;
     match getsockopt(stream, PeerCredentials) {
-        Ok(cred) => cred.uid() == Uid::current().as_raw(),
+        Ok(cred) => {
+            let uid = cred.uid();
+            uid == Uid::current().as_raw() || allow_uids.contains(&uid)
+        }
         Err(_) => false,
     }
 }
@@ -107,7 +119,11 @@ pub type Handler = Arc<dyn Fn(Request, &mut UnixStream) -> Result<()> + Send + S
 ///
 /// Concurrent handlers are capped at [`MAX_IPC_CLIENTS`]; excess clients receive
 /// an immediate error response.
-pub fn serve(socket_path: &Path, handler: Handler) -> Result<()> {
+///
+/// When `allow.allow_uids` is non-empty, the socket is immediately set to
+/// `0660` and `chown`ed to `root:<allow.socket_gid>` (fail-closed if gid missing).
+/// Otherwise the socket stays `0600` (daemon-uid-only).
+pub fn serve(socket_path: &Path, handler: Handler, allow: IpcAllow) -> Result<()> {
     if let Some(parent) = socket_path.parent() {
         if !parent.as_os_str().is_empty() {
             std::fs::create_dir_all(parent).map_err(|e| Error::io_at(parent, e))?;
@@ -119,19 +135,15 @@ pub fn serve(socket_path: &Path, handler: Handler) -> Result<()> {
         Err(e) => return Err(Error::io_at(socket_path, e)),
     }
     let listener = UnixListener::bind(socket_path).map_err(|e| Error::io_at(socket_path, e))?;
-    use std::os::unix::fs::PermissionsExt;
-    let mut perms = std::fs::metadata(socket_path)
-        .map_err(|e| Error::io_at(socket_path, e))?
-        .permissions();
-    perms.set_mode(0o600);
-    std::fs::set_permissions(socket_path, perms).map_err(|e| Error::io_at(socket_path, e))?;
+    apply_socket_perms(socket_path, &allow)?;
 
     let path = socket_path.to_path_buf();
+    let allow_uids = allow.allow_uids;
     thread::spawn(move || {
         for conn in listener.incoming() {
             match conn {
                 Ok(mut stream) => {
-                    if !peer_allowed(&stream) {
+                    if !peer_allowed(&stream, &allow_uids) {
                         let _ = write_frame(
                             &mut stream,
                             &Response::Error {
@@ -179,5 +191,41 @@ pub fn serve(socket_path: &Path, handler: Handler) -> Result<()> {
             }
         }
     });
+    Ok(())
+}
+
+fn apply_socket_perms(socket_path: &Path, allow: &IpcAllow) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    if allow.allow_uids.is_empty() {
+        let mut perms = std::fs::metadata(socket_path)
+            .map_err(|e| Error::io_at(socket_path, e))?
+            .permissions();
+        perms.set_mode(0o600);
+        std::fs::set_permissions(socket_path, perms).map_err(|e| Error::io_at(socket_path, e))?;
+        return Ok(());
+    }
+    let gid = allow.socket_gid.ok_or_else(|| {
+        Error::Config(
+            "socketAllowUsers set but no socket group could be resolved".into(),
+        )
+    })?;
+    // chmod + chown immediately after bind — no window with 0600 for allowlisted peers.
+    let mut perms = std::fs::metadata(socket_path)
+        .map_err(|e| Error::io_at(socket_path, e))?
+        .permissions();
+    perms.set_mode(0o660);
+    std::fs::set_permissions(socket_path, perms).map_err(|e| Error::io_at(socket_path, e))?;
+    use nix::unistd::{chown, Gid, Uid};
+    chown(
+        socket_path,
+        Some(Uid::from_raw(0)),
+        Some(Gid::from_raw(gid)),
+    )
+    .map_err(|e| {
+        Error::io_at(
+            socket_path,
+            std::io::Error::new(std::io::ErrorKind::PermissionDenied, e),
+        )
+    })?;
     Ok(())
 }

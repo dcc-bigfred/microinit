@@ -96,6 +96,7 @@ fn serve_list_roundtrip() {
             }
             Ok(())
         }),
+        IpcAllow::default(),
     )
     .unwrap();
 

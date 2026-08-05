@@ -257,8 +257,12 @@ pub fn resolve(ctx: &SecurityContext) -> Result<Option<ResolvedIdentity>> {
 
 /// Apply identity in the child after fork, before exec.
 ///
-/// Order: keepcaps → bounding-set drop → setgroups([]) → setgid → setuid →
-/// capset + ambient → `PR_SET_NO_NEW_PRIVS`.
+/// Order: keepcaps → bounding-set drop → initgroups (or setgroups([])) →
+/// setgid → setuid → capset + ambient → `PR_SET_NO_NEW_PRIVS`.
+///
+/// When a passwd username is known, [`unistd::initgroups`] installs that
+/// user's supplementary groups from `/etc/group` (e.g. `bigfred` ∈ `dialout`).
+/// Numeric uids without a passwd entry keep the fail-closed `setgroups([])`.
 ///
 /// # Safety
 ///
@@ -287,15 +291,12 @@ pub fn apply_pre_exec(ident: &ResolvedIdentity) -> Result<()> {
     // Shrink the capability bounding set while still privileged.
     drop_bounding_set(&ident.caps)?;
 
-    // Fail-closed: when dropping uid/gid we must clear supplementary groups.
+    // Fail-closed vs inheriting the parent's (often root) supplementary groups.
+    // Prefer initgroups(username) so /etc/group memberships (e.g. dialout) apply.
     // User namespaces with `/proc/self/setgroups=deny` are unsupported for
     // securityContext identity drops.
     if drop_id {
-        unistd::setgroups(&[]).map_err(|e| {
-            Error::Security(format!(
-                "setgroups: {e} (required when runAsUser/runAsGroup is set)"
-            ))
-        })?;
+        apply_groups(ident)?;
     }
 
     if let Some(gid) = ident.gid {
@@ -324,6 +325,27 @@ pub fn apply_pre_exec(ident: &ResolvedIdentity) -> Result<()> {
         )));
     }
 
+    Ok(())
+}
+
+fn apply_groups(ident: &ResolvedIdentity) -> Result<()> {
+    use std::ffi::CString;
+    if let (Some(ref name), Some(gid)) = (&ident.username, ident.gid) {
+        let cname = CString::new(name.as_str()).map_err(|_| {
+            Error::Security(format!("username '{name}' contains NUL"))
+        })?;
+        unistd::initgroups(&cname, Gid::from_raw(gid)).map_err(|e| {
+            Error::Security(format!(
+                "initgroups({name}, {gid}): {e} (required when runAsUser/runAsGroup is set)"
+            ))
+        })?;
+        return Ok(());
+    }
+    unistd::setgroups(&[]).map_err(|e| {
+        Error::Security(format!(
+            "setgroups: {e} (required when runAsUser/runAsGroup is set)"
+        ))
+    })?;
     Ok(())
 }
 
