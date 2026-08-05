@@ -26,11 +26,13 @@ var (
 
 // ServiceStatus mirrors microinit IPC list/status entries.
 type ServiceStatus struct {
-	Name     string `json:"name"`
-	State    string `json:"state"`
-	PID      *int32 `json:"pid"`
-	Restarts uint32 `json:"restarts"`
-	Enabled  bool   `json:"enabled"`
+	Name             string            `json:"name"`
+	State            string            `json:"state"`
+	PID              *int32            `json:"pid"`
+	Restarts         uint32            `json:"restarts"`
+	Enabled          bool              `json:"enabled"`
+	LivenessFailures uint32            `json:"liveness_failures,omitempty"`
+	Labels           map[string]string `json:"labels,omitempty"`
 }
 
 // LogLine is one captured log line from microinit.

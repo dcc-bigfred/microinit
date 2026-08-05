@@ -1,6 +1,6 @@
 //! Unit/integration tests for microinit::service
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use microinit::config::ServiceConfig;
 use microinit::service::*;
@@ -24,6 +24,7 @@ fn cfg() -> ServiceConfig {
         env: HashMap::new(),
         cwd: "/".into(),
         liveness_probe: None,
+        labels: BTreeMap::new(),
     }
 }
 

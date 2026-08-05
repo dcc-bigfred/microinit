@@ -26,6 +26,7 @@ pub mod error;
 pub mod graph;
 pub mod init;
 pub mod ipc;
+pub mod labels;
 pub mod liveness;
 pub mod logs;
 #[cfg(feature = "otel")]

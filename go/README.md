@@ -13,7 +13,7 @@ Full guide with examples: **[docs/sdk/golang.md](../docs/sdk/golang.md)**. Devel
 ## Install
 
 ```bash
-go get github.com/dcc-bigfred/microinit/go@go/v0.2.0
+go get github.com/dcc-bigfred/microinit/go@go/v0.3.0
 ```
 
 Tag Go releases as **`go/vX.Y.Z`**. Private: `GOPRIVATE=github.com/dcc-bigfred/*`.
@@ -28,11 +28,14 @@ replace github.com/dcc-bigfred/microinit/go => ../microinit/go
 ```go
 import (
 	"github.com/dcc-bigfred/microinit/go/client"
+	"github.com/dcc-bigfred/microinit/go/config"
 	"github.com/dcc-bigfred/microinit/go/supervise"
 )
 
 c := &client.Client{Socket: client.DefaultSocket}
 list, err := c.List()
+
+svc := config.WithCreatedBy(config.ServiceDef{Name: "worker", StartCmd: "exec worker"}, "my-app")
 
 h := supervise.New(socket, "microinit", configPath, dropinDir)
 joined, err := h.EnsureRunning(ctx)

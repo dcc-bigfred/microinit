@@ -127,7 +127,7 @@ fn run_http_probe(url: &str, method: &str, accepted: &[u16], timeout: Duration) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    use std::collections::{BTreeMap, HashMap};
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::thread;
@@ -151,6 +151,7 @@ mod tests {
             env: HashMap::new(),
             cwd: "/".into(),
             liveness_probe: None,
+        labels: BTreeMap::new(),
         }
     }
 

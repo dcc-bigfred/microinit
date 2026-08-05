@@ -33,6 +33,13 @@
 .Nm
 .Op Fl -socket Ns = Ns Ar path
 .Cm list
+.Op Fl -show-labels
+.Op Fl -selector Ns = Ns Ar key=value
+.Op Fl l Ar key=value
+.Nm
+.Op Fl -socket Ns = Ns Ar path
+.Cm describe
+.Ar name
 .Nm
 .Op Fl -socket Ns = Ns Ar path
 .Cm logs
@@ -173,12 +180,28 @@ Control socket
 .Bd -literal
 microinit init --logs-tty=/dev/tty2 --init-logs-tty=/dev/tty3
 microinit list
+microinit list --show-labels
+microinit list -l created-by=bigfred
+microinit describe redis
 microinit start redis
 microinit start --force alloy
 microinit restart redis
 microinit logs alloy --follow
 microinit disable dropbear
 .Ed
+.Pp
+.Cm list
+supports
+.Fl -show-labels
+to print a
+.Cm LABELS
+column, and repeatable
+.Fl l / Fl -selector
+.Pq form Cm key=value
+to keep only services matching all selectors
+.Pq AND .
+.Cm describe
+always prints labels.
 .Pp
 .Cm start
 prints a status line on stdout: either that the service is starting, that it is

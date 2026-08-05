@@ -1,6 +1,6 @@
 //! Unit/integration tests for microinit::graph
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use microinit::config::ServiceConfig;
 use microinit::error::Error;
@@ -25,6 +25,7 @@ fn svc(name: &str, deps: &[&str], bg: bool) -> ServiceConfig {
         env: HashMap::new(),
         cwd: "/".into(),
         liveness_probe: None,
+        labels: BTreeMap::new(),
     }
 }
 

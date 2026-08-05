@@ -2,19 +2,20 @@ package config
 
 // ServiceDef is one service entry in microinit.json or a drop-in file.
 type ServiceDef struct {
-	Name             string         `json:"name"`
-	Enabled          *bool          `json:"enabled,omitempty"`
-	Daemon           *bool          `json:"daemon,omitempty"`
-	Restart          *bool          `json:"restart,omitempty"`
-	RestartBackoff   *int           `json:"restartBackoff,omitempty"`
-	StartWaitSecs    *int           `json:"startWaitSecs,omitempty"`
-	ShutdownWaitSecs *int           `json:"shutdownWaitSecs,omitempty"`
-	DependsOn        []string       `json:"dependsOn,omitempty"`
-	StartCmd         string         `json:"startCmd,omitempty"`
-	StopCmd          string         `json:"stopCmd,omitempty"`
-	Cmd              string         `json:"cmd,omitempty"`
-	Cwd              string         `json:"cwd,omitempty"`
-	LivenessProbe    *LivenessProbe `json:"livenessProbe,omitempty"`
+	Name             string            `json:"name"`
+	Enabled          *bool             `json:"enabled,omitempty"`
+	Daemon           *bool             `json:"daemon,omitempty"`
+	Restart          *bool             `json:"restart,omitempty"`
+	RestartBackoff   *int              `json:"restartBackoff,omitempty"`
+	StartWaitSecs    *int              `json:"startWaitSecs,omitempty"`
+	ShutdownWaitSecs *int              `json:"shutdownWaitSecs,omitempty"`
+	DependsOn        []string          `json:"dependsOn,omitempty"`
+	StartCmd         string            `json:"startCmd,omitempty"`
+	StopCmd          string            `json:"stopCmd,omitempty"`
+	Cmd              string            `json:"cmd,omitempty"`
+	Cwd              string            `json:"cwd,omitempty"`
+	LivenessProbe    *LivenessProbe    `json:"livenessProbe,omitempty"`
+	Labels           map[string]string `json:"labels,omitempty"`
 }
 
 // LivenessProbe mirrors microinit JSON probe fields.
