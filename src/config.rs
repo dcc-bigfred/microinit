@@ -1,6 +1,6 @@
 //! Configuration model and load/save for microinit.json + enabled override.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -185,6 +185,41 @@ impl LivenessProbe {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+#[non_exhaustive]
+pub enum RestartPolicy {
+    /// Restart on every exit, including success (exit 0 / successExitCodes).
+    Always,
+    /// Restart only on non-success exits (default).
+    #[default]
+    OnError,
+    /// Never auto-restart.
+    None,
+}
+
+impl RestartPolicy {
+    /// Whether an exit with the given success classification should trigger a restart.
+    #[must_use]
+    pub fn should_restart(self, success: bool) -> bool {
+        match self {
+            Self::Always => true,
+            Self::OnError => !success,
+            Self::None => false,
+        }
+    }
+
+    /// Policies other than [`Self::None`] require `daemon=true`.
+    #[must_use]
+    pub fn requires_daemon(self) -> bool {
+        !matches!(self, Self::None)
+    }
+}
+
+fn default_restart_policy() -> RestartPolicy {
+    RestartPolicy::OnError
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ServiceConfig {
@@ -193,8 +228,10 @@ pub struct ServiceConfig {
     pub enabled: bool,
     #[serde(default = "default_true")]
     pub daemon: bool,
-    #[serde(default)]
-    pub restart: bool,
+    /// Auto-restart policy. Replaces the former `restart` bool
+    /// (`true` → `onError`, `false` → `none`).
+    #[serde(default = "default_restart_policy")]
+    pub restart_policy: RestartPolicy,
     #[serde(default = "default_backoff")]
     pub restart_backoff: u64,
     #[serde(default = "default_success_codes")]
@@ -225,6 +262,9 @@ pub struct ServiceConfig {
     /// Optional periodic health check; on failure the service is restarted.
     #[serde(default)]
     pub liveness_probe: Option<LivenessProbe>,
+    /// Arbitrary key=value labels (e.g. `created-by=bigfred`). Stable order via BTreeMap.
+    #[serde(default)]
+    pub labels: BTreeMap<String, String>,
 }
 
 fn default_true() -> bool {
@@ -245,6 +285,50 @@ fn default_shutdown_wait() -> u64 {
 
 fn default_cwd() -> String {
     "/".to_string()
+}
+
+const LABEL_KEY_MAX: usize = 63;
+const LABEL_VALUE_MAX: usize = 253;
+
+/// Validate service label map (keys/values non-empty, key charset, length limits).
+pub fn validate_labels(service: &str, labels: &BTreeMap<String, String>) -> Result<()> {
+    for (key, value) in labels {
+        if key.is_empty() {
+            return Err(Error::Config(format!(
+                "service '{service}': label key must not be empty"
+            )));
+        }
+        if key.len() > LABEL_KEY_MAX {
+            return Err(Error::Config(format!(
+                "service '{service}': label key '{key}' exceeds {LABEL_KEY_MAX} characters"
+            )));
+        }
+        if !is_valid_label_key(key) {
+            return Err(Error::Config(format!(
+                "service '{service}': invalid label key '{key}' (want [A-Za-z0-9][A-Za-z0-9._-]*)"
+            )));
+        }
+        if value.is_empty() {
+            return Err(Error::Config(format!(
+                "service '{service}': label '{key}' value must not be empty"
+            )));
+        }
+        if value.len() > LABEL_VALUE_MAX {
+            return Err(Error::Config(format!(
+                "service '{service}': label '{key}' value exceeds {LABEL_VALUE_MAX} characters"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn is_valid_label_key(key: &str) -> bool {
+    let mut chars = key.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphanumeric() => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-')
 }
 
 impl ServiceConfig {
@@ -390,9 +474,9 @@ impl Config {
                     svc.name
                 )));
             }
-            if svc.restart && !svc.daemon {
+            if matches!(svc.restart_policy, RestartPolicy::Always) && !svc.daemon {
                 return Err(Error::Config(format!(
-                    "service '{}': restart=true requires daemon=true",
+                    "service '{}': restartPolicy=always requires daemon=true",
                     svc.name
                 )));
             }
@@ -442,6 +526,7 @@ impl Config {
                     )));
                 }
             }
+            validate_labels(&svc.name, &svc.labels)?;
         }
         for svc in &self.services {
             for dep in &svc.depends_on {
@@ -628,7 +713,7 @@ pub fn example_config() -> Config {
                 name: "network".into(),
                 enabled: true,
                 daemon: false,
-                restart: false,
+                restart_policy: RestartPolicy::None,
                 restart_backoff: 2,
                 success_exit_codes: vec![0],
                 start_wait_secs: 0,
@@ -651,12 +736,13 @@ pub fn example_config() -> Config {
                     interval: 30,
                     timeout: 5,
                 }),
+                labels: BTreeMap::new(),
             },
             ServiceConfig {
                 name: "redis".into(),
                 enabled: true,
                 daemon: true,
-                restart: true,
+                restart_policy: RestartPolicy::OnError,
                 restart_backoff: 2,
                 success_exit_codes: vec![0],
                 start_wait_secs: 0,
@@ -670,12 +756,13 @@ pub fn example_config() -> Config {
                 env: HashMap::new(),
                 cwd: "/".into(),
                 liveness_probe: None,
+                labels: BTreeMap::new(),
             },
             ServiceConfig {
                 name: "remote-icmp".into(),
                 enabled: true,
                 daemon: true,
-                restart: true,
+                restart_policy: RestartPolicy::OnError,
                 restart_backoff: 5,
                 success_exit_codes: vec![0],
                 start_wait_secs: 0,
@@ -692,6 +779,7 @@ pub fn example_config() -> Config {
                 env: HashMap::new(),
                 cwd: "/".into(),
                 liveness_probe: None,
+                labels: BTreeMap::new(),
             },
         ],
     }

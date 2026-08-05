@@ -63,4 +63,16 @@ impl Error {
             source,
         }
     }
+
+    /// Stable machine-readable error code for the IPC `Response::Error`.
+    /// Clients map on this instead of substring-matching the human message.
+    /// `None` means "no stable code"; clients fall back to the message.
+    pub fn code(&self) -> Option<&'static str> {
+        match self {
+            Error::UnknownService(_) => Some("not_found"),
+            Error::Disabled(_) => Some("disabled"),
+            Error::Cycle(_) => Some("cycle"),
+            _ => None,
+        }
+    }
 }

@@ -1,5 +1,7 @@
 //! IPC protocol messages (length-prefixed JSON frames).
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 /// Runtime state of a service as reported over IPC.
@@ -49,6 +51,9 @@ pub struct ServiceStatus {
     #[serde(default)]
     pub liveness_failures: u32,
     pub enabled: bool,
+    /// Service labels from config (stable key order).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub labels: BTreeMap<String, String>,
 }
 
 /// Kind of lifecycle event retained for `describe`.
@@ -222,6 +227,11 @@ pub enum Response {
     },
     Error {
         message: String,
+        /// Stable machine-readable code (e.g. "not_found", "disabled").
+        /// Absent for errors without a canonical code; clients fall back to
+        /// substring-matching `message` for backward compatibility.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        code: Option<String>,
     },
     List {
         services: Vec<ServiceStatus>,
@@ -236,4 +246,7 @@ pub enum Response {
     Log {
         line: LogLine,
     },
+    /// Keepalive on follow log streams so clients with idle read deadlines
+    /// do not disconnect a quiet but healthy service.
+    Heartbeat,
 }

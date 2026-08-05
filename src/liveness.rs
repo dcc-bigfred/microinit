@@ -127,17 +127,19 @@ fn run_http_probe(url: &str, method: &str, accepted: &[u16], timeout: Duration) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    use std::collections::{BTreeMap, HashMap};
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::thread;
+
+    use crate::config::RestartPolicy;
 
     fn cfg() -> ServiceConfig {
         ServiceConfig {
             name: "t".into(),
             enabled: true,
             daemon: false,
-            restart: false,
+            restart_policy: RestartPolicy::None,
             restart_backoff: 1,
             success_exit_codes: vec![0],
             start_wait_secs: 0,
@@ -151,6 +153,7 @@ mod tests {
             env: HashMap::new(),
             cwd: "/".into(),
             liveness_probe: None,
+            labels: BTreeMap::new(),
         }
     }
 

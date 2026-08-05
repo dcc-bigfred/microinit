@@ -87,7 +87,14 @@ enum Commands {
     /// Disable a service (persist override + stop)
     Disable { name: String },
     /// List services and their state
-    List,
+    List {
+        /// Show labels column
+        #[arg(long)]
+        show_labels: bool,
+        /// Label selector `key=value` (repeatable; AND). Short `-l`.
+        #[arg(short = 'l', long = "selector")]
+        selector: Vec<String>,
+    },
     /// Show detailed status, dependencies, and recent lifecycle events
     Describe { name: String },
     /// Show service logs (or mixed if name omitted)
@@ -241,7 +248,10 @@ fn main() -> ExitCode {
         Commands::Restart { name } => cli::cmd_restart(&cli.socket, &name),
         Commands::Enable { name } => cli::cmd_enable(&cli.socket, &name),
         Commands::Disable { name } => cli::cmd_disable(&cli.socket, &name),
-        Commands::List => cli::cmd_list(&cli.socket),
+        Commands::List {
+            show_labels,
+            selector,
+        } => cli::cmd_list(&cli.socket, show_labels, &selector),
         Commands::Describe { name } => cli::cmd_describe(&cli.socket, &name),
         Commands::Logs {
             name,

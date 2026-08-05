@@ -1,5 +1,7 @@
 //! Unit/integration tests for microinit::protocol
 
+use std::collections::BTreeMap;
+
 use microinit::protocol::*;
 
 #[test]
@@ -51,6 +53,7 @@ fn request_response_serde_roundtrip() {
             restarts: 2,
             liveness_failures: 1,
             enabled: true,
+            labels: BTreeMap::new(),
         },
     };
     let json = serde_json::to_string(&resp).unwrap();
@@ -67,6 +70,7 @@ fn request_response_serde_roundtrip() {
                 restarts: 0,
                 liveness_failures: 0,
                 enabled: true,
+                labels: BTreeMap::new(),
             },
             uptime_secs: Some(10),
             depends_on: vec![DepNode {
@@ -155,6 +159,7 @@ fn describe_event_kinds_serde_roundtrip() {
                 restarts: 0,
                 liveness_failures: 0,
                 enabled: true,
+                labels: BTreeMap::new(),
             },
             uptime_secs: None,
             depends_on: vec![],

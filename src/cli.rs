@@ -66,28 +66,57 @@ pub fn cmd_shutdown(socket: &Path, mode: ShutdownMode) -> Result<()> {
     simple_ok(socket, Request::Shutdown { mode })
 }
 
-pub fn cmd_list(socket: &Path) -> Result<()> {
+pub fn cmd_list(socket: &Path, show_labels: bool, selectors: &[String]) -> Result<()> {
+    let want: Vec<(String, String)> = selectors
+        .iter()
+        .map(|s| crate::labels::parse_selector(s))
+        .collect::<Result<Vec<_>>>()?;
     match request(socket, &Request::List)? {
         Response::List { services } => {
-            println!(
-                "{:<20} {:<22} {:>8} {:>8} {:>8} {:>10}",
-                "NAME", "STATE", "PID", "RESTARTS", "ENABLED", "LIVE_FAIL"
-            );
-            for s in services {
-                let pid = s.pid.map(|p| p.to_string()).unwrap_or_else(|| "-".into());
+            let services: Vec<_> = services
+                .into_iter()
+                .filter(|s| crate::labels::matches_selectors(&s.labels, &want))
+                .collect();
+            if show_labels {
+                println!(
+                    "{:<20} {:<22} {:>8} {:>8} {:>8} {:>10} LABELS",
+                    "NAME", "STATE", "PID", "RESTARTS", "ENABLED", "LIVE_FAIL"
+                );
+            } else {
                 println!(
                     "{:<20} {:<22} {:>8} {:>8} {:>8} {:>10}",
-                    s.name,
-                    s.state.to_string(),
-                    pid,
-                    s.restarts,
-                    if s.enabled { "yes" } else { "no" },
-                    s.liveness_failures
+                    "NAME", "STATE", "PID", "RESTARTS", "ENABLED", "LIVE_FAIL"
                 );
+            }
+            for s in services {
+                let pid = s.pid.map(|p| p.to_string()).unwrap_or_else(|| "-".into());
+                if show_labels {
+                    let labels = crate::labels::format_labels(&s.labels);
+                    println!(
+                        "{:<20} {:<22} {:>8} {:>8} {:>8} {:>10} {}",
+                        s.name,
+                        s.state.to_string(),
+                        pid,
+                        s.restarts,
+                        if s.enabled { "yes" } else { "no" },
+                        s.liveness_failures,
+                        if labels.is_empty() { "-" } else { &labels }
+                    );
+                } else {
+                    println!(
+                        "{:<20} {:<22} {:>8} {:>8} {:>8} {:>10}",
+                        s.name,
+                        s.state.to_string(),
+                        pid,
+                        s.restarts,
+                        if s.enabled { "yes" } else { "no" },
+                        s.liveness_failures
+                    );
+                }
             }
             Ok(())
         }
-        Response::Error { message } => Err(Error::Ipc(message)),
+        Response::Error { message, .. } => Err(Error::Ipc(message)),
         other => Err(Error::Ipc(format!("unexpected response: {other:?}"))),
     }
 }
@@ -98,7 +127,7 @@ pub fn cmd_describe(socket: &Path, name: &str) -> Result<()> {
             print_describe(&describe);
             Ok(())
         }
-        Response::Error { message } => Err(Error::Ipc(message)),
+        Response::Error { message, .. } => Err(Error::Ipc(message)),
         other => Err(Error::Ipc(format!("unexpected response: {other:?}"))),
     }
 }
@@ -113,6 +142,16 @@ fn print_describe(d: &ServiceDescribe) {
     println!("Restarts: {}", s.restarts);
     println!("Liveness failures: {}", s.liveness_failures);
     println!("Uptime:  {}", format_uptime(d.uptime_secs));
+    println!();
+
+    println!("Labels:");
+    if s.labels.is_empty() {
+        println!("  (none)");
+    } else {
+        for (k, v) in &s.labels {
+            println!("  {k}={v}");
+        }
+    }
     println!();
 
     println!("Depends on:");
@@ -302,7 +341,7 @@ pub fn cmd_start(socket: &Path, name: &str, force: bool) -> Result<()> {
             }
             Ok(())
         }
-        Response::Error { message } => Err(Error::Ipc(message)),
+        Response::Error { message, .. } => Err(Error::Ipc(message)),
         other => Err(Error::Ipc(format!("unexpected response: {other:?}"))),
     }
 }
@@ -360,8 +399,9 @@ pub fn cmd_logs(
                 writeln!(out, "[{}] {}: {}", line.ts, line.service, line.msg)?;
                 out.flush()?;
             }
+            Response::Heartbeat => {}
             Response::Ok { .. } => break,
-            Response::Error { message } => return Err(Error::Ipc(message)),
+            Response::Error { message, .. } => return Err(Error::Ipc(message)),
             other => return Err(Error::Ipc(format!("unexpected: {other:?}"))),
         }
     }
@@ -376,7 +416,7 @@ fn simple_ok(socket: &Path, req: Request) -> Result<()> {
             }
             Ok(())
         }
-        Response::Error { message } => Err(Error::Ipc(message)),
+        Response::Error { message, .. } => Err(Error::Ipc(message)),
         other => Err(Error::Ipc(format!("unexpected response: {other:?}"))),
     }
 }

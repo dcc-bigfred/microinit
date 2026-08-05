@@ -352,21 +352,11 @@ fn handle_ipc(
         }
         Request::Status { name } => match supervisor.status(&name) {
             Ok(status) => write_frame(stream, &Response::Status { status })?,
-            Err(e) => write_frame(
-                stream,
-                &Response::Error {
-                    message: e.to_string(),
-                },
-            )?,
+            Err(e) => write_frame(stream, &error_response(&e))?,
         },
         Request::Describe { name } => match supervisor.describe(&name) {
             Ok(describe) => write_frame(stream, &Response::Describe { describe })?,
-            Err(e) => write_frame(
-                stream,
-                &Response::Error {
-                    message: e.to_string(),
-                },
-            )?,
+            Err(e) => write_frame(stream, &error_response(&e))?,
         },
         Request::Start { name, force } => {
             respond_start(stream, supervisor.start_service(&name, force))?;
@@ -395,14 +385,27 @@ fn handle_ipc(
             }
             if follow {
                 let rx = hub.subscribe();
-                while let Ok(line) = rx.recv() {
-                    if let Some(ref nme) = name {
-                        if &line.service != nme {
-                            continue;
+                // Heartbeats keep Go/UI clients with idle read deadlines alive
+                // when a service is healthy but quiet.
+                const HEARTBEAT: std::time::Duration = std::time::Duration::from_secs(10);
+                loop {
+                    match rx.recv_timeout(HEARTBEAT) {
+                        Ok(line) => {
+                            if let Some(ref nme) = name {
+                                if &line.service != nme {
+                                    continue;
+                                }
+                            }
+                            if write_frame(stream, &Response::Log { line }).is_err() {
+                                break;
+                            }
                         }
-                    }
-                    if write_frame(stream, &Response::Log { line }).is_err() {
-                        break;
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                            if write_frame(stream, &Response::Heartbeat).is_err() {
+                                break;
+                            }
+                        }
+                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
                     }
                 }
             } else {
@@ -425,12 +428,7 @@ fn respond_start(stream: &mut UnixStream, res: Result<String>) -> Result<()> {
                 message: Some(message),
             },
         )?,
-        Err(e) => write_frame(
-            stream,
-            &Response::Error {
-                message: e.to_string(),
-            },
-        )?,
+        Err(e) => write_frame(stream, &error_response(&e))?,
     }
     Ok(())
 }
@@ -438,14 +436,19 @@ fn respond_start(stream: &mut UnixStream, res: Result<String>) -> Result<()> {
 fn respond_result(stream: &mut UnixStream, res: Result<()>) -> Result<()> {
     match res {
         Ok(()) => write_frame(stream, &Response::Ok { message: None })?,
-        Err(e) => write_frame(
-            stream,
-            &Response::Error {
-                message: e.to_string(),
-            },
-        )?,
+        Err(e) => write_frame(stream, &error_response(&e))?,
     }
     Ok(())
+}
+
+/// Build an IPC error response with the stable [Error::code] populated when
+/// available, so clients can map on `code` instead of substring-matching
+/// the human-readable message.
+fn error_response(e: &crate::error::Error) -> Response {
+    Response::Error {
+        message: e.to_string(),
+        code: e.code().map(|s| s.to_string()),
+    }
 }
 
 #[cfg(feature = "init")]

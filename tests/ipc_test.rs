@@ -1,5 +1,6 @@
 //! Unit/integration tests for microinit::ipc
 
+use std::collections::BTreeMap;
 use std::io::Cursor;
 use std::os::unix::net::UnixStream;
 use std::sync::Arc;
@@ -54,6 +55,7 @@ fn frame_roundtrip_unix_pair() {
                 restarts: 0,
                 liveness_failures: 0,
                 enabled: true,
+                labels: BTreeMap::new(),
             }],
         },
     )
@@ -88,6 +90,7 @@ fn serve_list_roundtrip() {
                     stream,
                     &Response::Error {
                         message: "no".into(),
+                        code: None,
                     },
                 )?,
             }

@@ -136,6 +136,7 @@ pub fn serve(socket_path: &Path, handler: Handler) -> Result<()> {
                             &mut stream,
                             &Response::Error {
                                 message: "permission denied".into(),
+                                code: Some("permission_denied".into()),
                             },
                         );
                         continue;
@@ -147,6 +148,7 @@ pub fn serve(socket_path: &Path, handler: Handler) -> Result<()> {
                                 message: format!(
                                     "too many concurrent IPC clients (max {MAX_IPC_CLIENTS})"
                                 ),
+                                code: Some("busy".into()),
                             },
                         );
                         continue;
@@ -163,6 +165,7 @@ pub fn serve(socket_path: &Path, handler: Handler) -> Result<()> {
                                 &mut stream,
                                 &Response::Error {
                                     message: e.to_string(),
+                                    code: e.code().map(|s| s.to_string()),
                                 },
                             );
                         }

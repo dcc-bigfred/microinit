@@ -3,7 +3,7 @@
 //! Child process waits are owned by the central PID 1 reaper ([`ExitRegistry`]),
 //! not by `std::process::Child::wait`, to avoid racing `waitpid(-1)`.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -330,6 +330,7 @@ impl Supervisor {
                     restarts: rt.restarts,
                     liveness_failures: rt.liveness_failures,
                     enabled: rt.enabled,
+                    labels: s.labels.clone(),
                 })
             })
             .collect()
@@ -337,9 +338,16 @@ impl Supervisor {
 
     pub fn status(&self, name: &str) -> Result<ServiceStatus> {
         let map = mutex_lock(&self.shared.runtimes);
+        let cfg = mutex_lock(&self.config);
         let rt = map
             .get(name)
             .ok_or_else(|| Error::UnknownService(name.to_string()))?;
+        let labels = cfg
+            .services
+            .iter()
+            .find(|s| s.name == name)
+            .map(|s| s.labels.clone())
+            .unwrap_or_default();
         Ok(ServiceStatus {
             name: name.to_string(),
             state: rt.state,
@@ -347,6 +355,7 @@ impl Supervisor {
             restarts: rt.restarts,
             liveness_failures: rt.liveness_failures,
             enabled: rt.enabled,
+            labels,
         })
     }
 
@@ -356,7 +365,7 @@ impl Supervisor {
     /// `config`), then builds the graph and formats event timestamps unlocked.
     pub fn describe(&self, name: &str) -> Result<ServiceDescribe> {
         // --- Snapshot under runtimes (released before config / graph work) ---
-        let (status, uptime_secs, events, states) = {
+        let (mut status, uptime_secs, events, states) = {
             let map = mutex_lock(&self.shared.runtimes);
             let rt = map
                 .get(name)
@@ -369,6 +378,7 @@ impl Supervisor {
                 restarts: rt.restarts,
                 liveness_failures: rt.liveness_failures,
                 enabled: rt.enabled,
+                labels: BTreeMap::new(),
             };
             // Uptime only while currently `Running` (`running_since` is cleared otherwise).
             let uptime_secs = if matches!(rt.state, ServiceState::Running) {
@@ -399,6 +409,7 @@ impl Supervisor {
                 .iter()
                 .find(|s| s.name == name)
                 .ok_or_else(|| Error::UnknownService(name.to_string()))?;
+            status.labels = svc.labels.clone();
             let depends_on_names = svc.depends_on.clone();
             let services_deps: Vec<(String, Vec<String>)> = cfg
                 .services
@@ -1015,29 +1026,32 @@ impl Supervisor {
             return;
         }
 
-        if success {
-            self.shared.set_state(name, ServiceState::Succeeded, None);
+        let stop_all = self.shared.stop_all.load(Ordering::SeqCst);
+        let should_restart = cfg.restart_policy.should_restart(success) && enabled && !stop_all;
+        if !should_restart {
+            let st = if success {
+                ServiceState::Succeeded
+            } else {
+                ServiceState::Failed
+            };
+            self.shared.set_state(name, st, None);
             return;
         }
 
-        if cfg.restart && enabled && !self.shared.stop_all.load(Ordering::SeqCst) {
-            self.shared.set_state(name, ServiceState::Restarting, None);
-            self.shared.bump_restarts(name);
-            self.hub.emit(
-                INIT_SERVICE,
-                LogLevel::Info,
-                format!(
-                    "{name}: exited {code}, restarting in {}s",
-                    cfg.restart_backoff
-                ),
-            );
-            thread::sleep(Duration::from_secs(cfg.restart_backoff));
-            if let Err(e) = self.do_start(cfg, tracked, false) {
-                self.hub
-                    .emit(INIT_SERVICE, LogLevel::Error, format!("{name}: {e}"));
-                self.shared.set_state(name, ServiceState::Failed, None);
-            }
-        } else {
+        self.shared.set_state(name, ServiceState::Restarting, None);
+        self.shared.bump_restarts(name);
+        self.hub.emit(
+            INIT_SERVICE,
+            LogLevel::Info,
+            format!(
+                "{name}: exited {code}, restarting in {}s",
+                cfg.restart_backoff
+            ),
+        );
+        thread::sleep(Duration::from_secs(cfg.restart_backoff));
+        if let Err(e) = self.do_start(cfg, tracked, false) {
+            self.hub
+                .emit(INIT_SERVICE, LogLevel::Error, format!("{name}: {e}"));
             self.shared.set_state(name, ServiceState::Failed, None);
         }
     }
