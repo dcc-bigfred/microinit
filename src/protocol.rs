@@ -1,5 +1,7 @@
 //! IPC protocol messages (length-prefixed JSON frames).
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 /// Runtime state of a service as reported over IPC.
@@ -49,6 +51,9 @@ pub struct ServiceStatus {
     #[serde(default)]
     pub liveness_failures: u32,
     pub enabled: bool,
+    /// Service labels from config (stable key order).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub labels: BTreeMap<String, String>,
 }
 
 /// Kind of lifecycle event retained for `describe`.

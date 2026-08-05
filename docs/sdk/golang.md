@@ -11,7 +11,7 @@ github.com/dcc-bigfred/microinit/go
 Tag releases as `go/vX.Y.Z` (required because the module path ends with `/go`).
 
 ```bash
-go get github.com/dcc-bigfred/microinit/go@go/v0.2.0
+go get github.com/dcc-bigfred/microinit/go@go/v0.3.0
 ```
 
 Private repos: `GOPRIVATE=github.com/dcc-bigfred/*`.
@@ -27,10 +27,30 @@ replace github.com/dcc-bigfred/microinit/go => ../microinit/go
 | Package | Import path | Role |
 |---------|-------------|------|
 | **client** | `…/go/client` | IPC to a running daemon |
-| **config** | `…/go/config` | `ServiceDef`, drop-in read/write, base config names |
+| **config** | `…/go/config` | `ServiceDef`, drop-in read/write, labels helpers |
 | **supervise** | `…/go/supervise` | Join or spawn `microinit supervise` inside your process |
 
 Default control socket: `/data/run/microinit.sock` (`client.DefaultSocket`).
+
+## Labels
+
+Service configs may include `labels` (`map[string]string`). Convention for embedders:
+
+```go
+svc := config.WithCreatedBy(config.ServiceDef{
+	Name: "worker", StartCmd: "exec /usr/bin/worker",
+}, "my-app")
+// writes labels: {"created-by":"my-app"}
+
+// Filter a List() result:
+for _, s := range list {
+	if config.MatchLabels(s.Labels, map[string]string{config.LabelCreatedBy: "my-app"}) {
+		fmt.Println(s.Name)
+	}
+}
+```
+
+CLI: `microinit list -l created-by=my-app` and `microinit list --show-labels`.
 
 ## Design: process vs product policy
 
@@ -117,13 +137,13 @@ func main() {
 	log.Printf("microinit ready (joined=%v)", joined)
 
 	// Application policy: write only your drop-ins.
-	_ = config.WriteDropin(h.DropinDir, "app", "worker", config.ServiceDef{
+	_ = config.WriteDropin(h.DropinDir, "app", "worker", config.WithCreatedBy(config.ServiceDef{
 		Name:     "worker",
 		Enabled:  config.BoolPtr(true),
 		Daemon:   config.BoolPtr(true),
 		Restart:  config.BoolPtr(true),
 		StartCmd: "exec /usr/bin/my-worker",
-	})
+	}, "my-app"))
 
 	<-ctx.Done()
 
@@ -169,6 +189,7 @@ err = config.WriteDropin(dropinDir, "infra", "redis", svc)
 | `SyncGroup` / `ListGroup` | Reconcile a group directory |
 | `DropinExists` | Presence check |
 | `BaseConfigServiceNames` | Names from main `microinit.json` |
+| `WithCreatedBy` / `MatchLabels` | Label helpers (`created-by`) |
 | `BoolPtr` / `IntPtr` | Optional JSON helpers |
 
 ## supervise API (summary)

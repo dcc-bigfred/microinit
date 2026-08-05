@@ -1,6 +1,6 @@
 //! Unit/integration tests for microinit::supervisor
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::Write;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -44,6 +44,7 @@ fn job(name: &str, start: &str, deps: &[&str], enabled: bool) -> ServiceConfig {
         env: HashMap::new(),
         cwd: "/".into(),
         liveness_probe: None,
+        labels: BTreeMap::new(),
     }
 }
 
@@ -66,6 +67,7 @@ fn daemon_cfg(name: &str, start: &str) -> ServiceConfig {
         env: HashMap::new(),
         cwd: "/".into(),
         liveness_probe: None,
+        labels: BTreeMap::new(),
     }
 }
 

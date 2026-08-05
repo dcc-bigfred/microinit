@@ -126,6 +126,20 @@ when specific cmds are null
 Explicit shell commands
 .It Cm env , cwd
 Environment and working directory
+.It Cm labels
+Optional object of string key/value pairs
+.Pq for example Cm created-by=bigfred .
+Keys must match
+.Li [A-Za-z0-9][A-Za-z0-9._-]*
+.Pq max 63 characters ;
+values are non-empty
+.Pq max 253 characters .
+Shown by
+.Cm describe
+and by
+.Cm list Fl -show-labels ;
+filter with
+.Cm list Fl l .
 .It Cm livenessProbe
 Optional object. Exactly one of
 .Cm cmd ,

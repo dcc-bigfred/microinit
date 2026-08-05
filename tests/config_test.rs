@@ -1,6 +1,6 @@
 //! Unit/integration tests for microinit::config
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::PathBuf;
 
@@ -25,6 +25,7 @@ fn minimal_svc(name: &str) -> ServiceConfig {
         env: HashMap::new(),
         cwd: "/".into(),
         liveness_probe: None,
+        labels: BTreeMap::new(),
     }
 }
 
@@ -63,6 +64,7 @@ fn resolve_cmd_fallback() {
         env: HashMap::new(),
         cwd: "/".into(),
         liveness_probe: None,
+        labels: BTreeMap::new(),
     };
     assert_eq!(svc.resolve_start().unwrap(), "/etc/init.d/redis start");
     assert_eq!(svc.resolve_stop().unwrap(), "/etc/init.d/redis stop");
@@ -89,6 +91,7 @@ fn resolve_explicit_cmds_prefer_over_cmd() {
         env: HashMap::new(),
         cwd: "/".into(),
         liveness_probe: None,
+        labels: BTreeMap::new(),
     };
     assert_eq!(svc.resolve_start().unwrap(), "start-me");
     assert_eq!(svc.resolve_stop().unwrap(), "stop-me");
@@ -115,6 +118,7 @@ fn resolve_restart_falls_back_to_stop_and_start() {
         env: HashMap::new(),
         cwd: "/".into(),
         liveness_probe: None,
+        labels: BTreeMap::new(),
     };
     assert_eq!(svc.resolve_restart().unwrap(), "do-stop && do-start");
 }
@@ -139,6 +143,7 @@ fn resolve_start_errors_without_cmds() {
         env: HashMap::new(),
         cwd: "/".into(),
         liveness_probe: None,
+        labels: BTreeMap::new(),
     };
     assert!(svc.resolve_start().is_err());
     assert!(svc.resolve_stop().is_err());
@@ -151,6 +156,21 @@ fn is_success_custom_codes() {
     assert!(svc.is_success(0));
     assert!(svc.is_success(2));
     assert!(!svc.is_success(1));
+}
+
+#[test]
+fn validate_rejects_bad_labels() {
+    let mut cfg = Config::default();
+    let mut s = minimal_svc("a");
+    s.labels.insert("bad key".into(), "x".into());
+    cfg.services.push(s);
+    assert!(cfg.validate().is_err());
+
+    let mut cfg = Config::default();
+    let mut s = minimal_svc("a");
+    s.labels.insert("created-by".into(), "bigfred".into());
+    cfg.services.push(s);
+    cfg.validate().unwrap();
 }
 
 #[test]
@@ -271,7 +291,8 @@ fn load_or_create_writes_defaults_and_example() {
     let config = dir.join("microinit.json");
     let example = dir.join("microinit.json.example");
     let override_f = dir.join("override.json");
-    let cfg = load_or_create(&config, &example, &override_f).unwrap();
+    let dropins = dir.join("dropins");
+    let cfg = load_or_create_with_dropins(&config, &example, &override_f, &dropins).unwrap();
     assert!(config.is_file());
     assert!(example.is_file());
     assert!(cfg.services.is_empty()); // default config has empty services
@@ -283,7 +304,7 @@ fn load_or_create_writes_defaults_and_example() {
     save_config(&config, &example_config()).unwrap();
     map.insert("redis".into(), false);
     save_override(&override_f, &map).unwrap();
-    let cfg2 = load_or_create(&config, &example, &override_f).unwrap();
+    let cfg2 = load_or_create_with_dropins(&config, &example, &override_f, &dropins).unwrap();
     assert!(!cfg2.get("redis").unwrap().enabled);
     let _ = fs::remove_dir_all(&dir);
 }

@@ -1,6 +1,6 @@
 //! Configuration model and load/save for microinit.json + enabled override.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -225,6 +225,9 @@ pub struct ServiceConfig {
     /// Optional periodic health check; on failure the service is restarted.
     #[serde(default)]
     pub liveness_probe: Option<LivenessProbe>,
+    /// Arbitrary key=value labels (e.g. `created-by=bigfred`). Stable order via BTreeMap.
+    #[serde(default)]
+    pub labels: BTreeMap<String, String>,
 }
 
 fn default_true() -> bool {
@@ -245,6 +248,50 @@ fn default_shutdown_wait() -> u64 {
 
 fn default_cwd() -> String {
     "/".to_string()
+}
+
+const LABEL_KEY_MAX: usize = 63;
+const LABEL_VALUE_MAX: usize = 253;
+
+/// Validate service label map (keys/values non-empty, key charset, length limits).
+pub fn validate_labels(service: &str, labels: &BTreeMap<String, String>) -> Result<()> {
+    for (key, value) in labels {
+        if key.is_empty() {
+            return Err(Error::Config(format!(
+                "service '{service}': label key must not be empty"
+            )));
+        }
+        if key.len() > LABEL_KEY_MAX {
+            return Err(Error::Config(format!(
+                "service '{service}': label key '{key}' exceeds {LABEL_KEY_MAX} characters"
+            )));
+        }
+        if !is_valid_label_key(key) {
+            return Err(Error::Config(format!(
+                "service '{service}': invalid label key '{key}' (want [A-Za-z0-9][A-Za-z0-9._-]*)"
+            )));
+        }
+        if value.is_empty() {
+            return Err(Error::Config(format!(
+                "service '{service}': label '{key}' value must not be empty"
+            )));
+        }
+        if value.len() > LABEL_VALUE_MAX {
+            return Err(Error::Config(format!(
+                "service '{service}': label '{key}' value exceeds {LABEL_VALUE_MAX} characters"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn is_valid_label_key(key: &str) -> bool {
+    let mut chars = key.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphanumeric() => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-')
 }
 
 impl ServiceConfig {
@@ -442,6 +489,7 @@ impl Config {
                     )));
                 }
             }
+            validate_labels(&svc.name, &svc.labels)?;
         }
         for svc in &self.services {
             for dep in &svc.depends_on {
@@ -651,6 +699,7 @@ pub fn example_config() -> Config {
                     interval: 30,
                     timeout: 5,
                 }),
+                labels: BTreeMap::new(),
             },
             ServiceConfig {
                 name: "redis".into(),
@@ -670,6 +719,7 @@ pub fn example_config() -> Config {
                 env: HashMap::new(),
                 cwd: "/".into(),
                 liveness_probe: None,
+                labels: BTreeMap::new(),
             },
             ServiceConfig {
                 name: "remote-icmp".into(),
@@ -692,6 +742,7 @@ pub fn example_config() -> Config {
                 env: HashMap::new(),
                 cwd: "/".into(),
                 liveness_probe: None,
+                labels: BTreeMap::new(),
             },
         ],
     }

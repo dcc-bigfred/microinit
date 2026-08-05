@@ -24,6 +24,9 @@ The control socket defaults to `$DATA_DIR/run/microinit.sock` (hub: `/data/run/m
 
 ```bash
 microinit list                          # name, state, pid, restarts, enabled, live_fail
+microinit list --show-labels            # same + LABELS column
+microinit list -l created-by=bigfred    # filter (AND if -l repeated)
+microinit describe redis                # deps, events, labels
 microinit describe redis                # deps, reverse deps, graph, recent events
 microinit start redis
 microinit start --force alloy           # start even if dependsOn are not ready
