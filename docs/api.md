@@ -49,7 +49,7 @@ Unknown fields should be ignored by clients where possible; the server may add f
 
 ### `describe`
 
-Rich status for one service: counters, uptime, direct deps, reverse deps, transitive dependency subgraph, and the last 10 lifecycle events.
+Rich status for one service: counters, uptime, direct deps, reverse deps, transitive dependency subgraph, and the last 16 lifecycle events.
 
 ```json
 { "type": "describe", "name": "nginx" }
@@ -251,12 +251,20 @@ Operators normally use the companion `shutdown` binary (`shutdown -r now`, …) 
 
 | Field | Meaning |
 |-------|---------|
-| `depends_on` | Direct `dependsOn` (who this service needs) |
-| `dependents` | Who lists this service in their `dependsOn` |
-| `dep_nodes` / `dep_edges` | Transitive subgraph; edge `[A, B]` means B depends on A |
-| `events` | Oldest → newest; kinds: `state_change`, `restart`, `liveness_failed` (ring, last 10) |
+| `depends_on` | Direct `dependsOn` (who this service needs); sorted by name |
+| `dependents` | Who lists this service in their `dependsOn`; sorted by name |
+| `dep_nodes` / `dep_edges` | Transitive subgraph (includes direct neighbours); edge `[A, B]` means B depends on A |
+| `events` | Oldest → newest; kinds: `state_change`, `restart`, `liveness_failed` (ring = last 16) |
 
 `uptime_secs` is omitted (or null) when the service is not currently `running`.
+
+Event field presence by `kind`:
+
+| `kind` | Set fields |
+|--------|------------|
+| `state_change` | `from`, `to` |
+| `restart` | (none beyond `ts` / `kind`) |
+| `liveness_failed` | optional `detail` (probe failure reason) |
 
 ### `log`
 

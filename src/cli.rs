@@ -124,7 +124,7 @@ fn print_describe(d: &ServiceDescribe) {
     println!();
 
     println!("Dependency graph:");
-    print_dep_graph(&d.dep_nodes, &d.dep_edges);
+    print!("{}", format_dep_graph(&d.dep_nodes, &d.dep_edges));
     println!();
 
     println!("Recent events (last {}):", d.events.len());
@@ -185,16 +185,16 @@ fn format_event(ev: &ServiceEvent) -> String {
 }
 
 /// Nested tree from roots (`├─>` / `└─>`), with `[already shown]` for repeats.
-fn print_dep_graph(nodes: &[DepNode], edges: &[(String, String)]) {
+///
+/// Returns a multi-line string (each line ends with `\n`) so unit tests can
+/// assert on the rendered graph without capturing stdout.
+fn format_dep_graph(nodes: &[DepNode], edges: &[(String, String)]) -> String {
+    let mut out = String::new();
+    // BFS in `describe` only visits nodes reachable via edges, so an empty
+    // edge set means an isolated service (at most the subject itself).
     if edges.is_empty() {
-        if nodes.len() <= 1 {
-            println!("  (none)");
-            return;
-        }
-        for n in nodes {
-            println!("  {} ({})", n.name, n.state);
-        }
-        return;
+        out.push_str("  (none)\n");
+        return out;
     }
 
     let states: HashMap<&str, &DepNode> = nodes.iter().map(|n| (n.name.as_str(), n)).collect();
@@ -225,42 +225,56 @@ fn print_dep_graph(nodes: &[DepNode], edges: &[(String, String)]) {
     }
 
     let mut expanded = HashSet::new();
+    let mut ctx = TreeCtx {
+        children: &children,
+        states: &states,
+        expanded: &mut expanded,
+    };
     for root in roots {
-        print_tree_node(root, "", true, true, &children, &states, &mut expanded);
+        write_tree_node(&mut out, root, "", true, true, &mut ctx);
     }
+    out
 }
 
-fn print_tree_node(
+struct TreeCtx<'a> {
+    children: &'a HashMap<&'a str, Vec<&'a str>>,
+    states: &'a HashMap<&'a str, &'a DepNode>,
+    expanded: &'a mut HashSet<String>,
+}
+
+fn write_tree_node(
+    out: &mut String,
     name: &str,
     prefix: &str,
     is_root: bool,
     is_last: bool,
-    children: &HashMap<&str, Vec<&str>>,
-    states: &HashMap<&str, &DepNode>,
-    expanded: &mut HashSet<String>,
+    ctx: &mut TreeCtx<'_>,
 ) {
-    let state = states
+    let state = ctx
+        .states
         .get(name)
         .map(|n| n.state.to_string())
         .unwrap_or_else(|| "?".into());
-    let already = expanded.contains(name);
+    let already = ctx.expanded.contains(name);
     let marker = if already { " [already shown]" } else { "" };
 
     if is_root {
-        println!("  {name} ({state}){marker}");
+        out.push_str(&format!("  {name} ({state}){marker}\n"));
     } else {
         let branch = if is_last { "└─>" } else { "├─>" };
-        println!("{prefix}{branch} {name} ({state}){marker}");
+        out.push_str(&format!("{prefix}{branch} {name} ({state}){marker}\n"));
     }
 
     if already {
         return;
     }
-    expanded.insert(name.to_string());
+    ctx.expanded.insert(name.to_string());
 
-    let Some(kids) = children.get(name) else {
+    let Some(kids) = ctx.children.get(name) else {
         return;
     };
+    // Clone kids so we can re-borrow ctx mutably in the loop.
+    let kids: Vec<&str> = kids.to_vec();
     let child_prefix = if is_root {
         String::from("  ")
     } else if is_last {
@@ -270,7 +284,7 @@ fn print_tree_node(
     };
     for (i, kid) in kids.iter().enumerate() {
         let last = i + 1 == kids.len();
-        print_tree_node(kid, &child_prefix, false, last, children, states, expanded);
+        write_tree_node(out, kid, &child_prefix, false, last, ctx);
     }
 }
 
@@ -364,5 +378,76 @@ fn simple_ok(socket: &Path, req: Request) -> Result<()> {
         }
         Response::Error { message } => Err(Error::Ipc(message)),
         other => Err(Error::Ipc(format!("unexpected response: {other:?}"))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::ServiceState;
+
+    fn node(name: &str, state: ServiceState) -> DepNode {
+        DepNode {
+            name: name.into(),
+            state,
+        }
+    }
+
+    #[test]
+    fn format_dep_graph_empty_edges() {
+        let nodes = vec![node("solo", ServiceState::Running)];
+        assert_eq!(format_dep_graph(&nodes, &[]), "  (none)\n");
+        assert_eq!(format_dep_graph(&[], &[]), "  (none)\n");
+    }
+
+    #[test]
+    fn format_dep_graph_chain() {
+        let nodes = vec![
+            node("a", ServiceState::Succeeded),
+            node("b", ServiceState::Running),
+            node("c", ServiceState::Pending),
+        ];
+        let edges = vec![("a".into(), "b".into()), ("b".into(), "c".into())];
+        let got = format_dep_graph(&nodes, &edges);
+        assert_eq!(
+            got,
+            "  a (succeeded)\n  └─> b (running)\n      └─> c (pending)\n"
+        );
+    }
+
+    #[test]
+    fn format_dep_graph_diamond_marks_already_shown() {
+        // a → b, a → c, b → d, c → d
+        let nodes = vec![
+            node("a", ServiceState::Running),
+            node("b", ServiceState::Running),
+            node("c", ServiceState::Running),
+            node("d", ServiceState::Stopped),
+        ];
+        let edges = vec![
+            ("a".into(), "b".into()),
+            ("a".into(), "c".into()),
+            ("b".into(), "d".into()),
+            ("c".into(), "d".into()),
+        ];
+        let got = format_dep_graph(&nodes, &edges);
+        assert!(got.contains("d (stopped)"), "got:\n{got}");
+        assert!(
+            got.contains("[already shown]"),
+            "diamond should mark repeated d, got:\n{got}"
+        );
+    }
+
+    #[test]
+    fn format_dep_graph_full_cycle_picks_lex_smallest_root() {
+        let nodes = vec![
+            node("b", ServiceState::Running),
+            node("a", ServiceState::Running),
+        ];
+        let edges = vec![("a".into(), "b".into()), ("b".into(), "a".into())];
+        let got = format_dep_graph(&nodes, &edges);
+        // Lex-smallest root is "a".
+        assert!(got.starts_with("  a (running)\n"), "got:\n{got}");
+        assert!(got.contains("[already shown]"), "got:\n{got}");
     }
 }

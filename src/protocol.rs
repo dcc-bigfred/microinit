@@ -73,6 +73,11 @@ impl std::fmt::Display for ServiceEventKind {
 }
 
 /// One retained lifecycle event (ring-buffered per service).
+///
+/// Field presence by `kind`:
+/// - `state_change`: `from` and `to` are set; `detail` is omitted
+/// - `restart`: only `ts` + `kind`
+/// - `liveness_failed`: optional `detail` (probe failure reason)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServiceEvent {
     /// RFC3339 timestamp with millis.

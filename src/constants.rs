@@ -35,6 +35,7 @@ pub const MAX_LOG_FOLLOWERS: usize = 16;
 /// Poll interval while waiting for a process to exit after SIGTERM.
 pub const TERMINATE_POLL: Duration = Duration::from_millis(100);
 /// Per-service lifecycle event ring capacity (bounded memory).
-pub const EVENT_RING_CAP: usize = 64;
-/// How many recent lifecycle events `describe` returns.
-pub const EVENT_RETURN: usize = 10;
+/// Same as [`EVENT_RETURN`]: the ring only exists to feed `describe`.
+pub const EVENT_RING_CAP: usize = 16;
+/// How many recent lifecycle events `describe` returns (= ring capacity).
+pub const EVENT_RETURN: usize = EVENT_RING_CAP;

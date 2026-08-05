@@ -477,3 +477,49 @@ fn describe_enable_disable_records_state_change() {
 
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn describe_event_ring_returns_at_most_event_return() {
+    let (sup, dir) = make_sup(vec![job("svc", "true", &[], true)]);
+    sup.boot().unwrap();
+    // Generate more transitions than the ring can hold.
+    let n = microinit::constants::EVENT_RING_CAP.saturating_mul(3).max(8);
+    for i in 0..n {
+        sup.set_enabled("svc", i % 2 == 0).unwrap();
+        thread::sleep(Duration::from_millis(20));
+    }
+    thread::sleep(Duration::from_millis(100));
+
+    let desc = sup.describe("svc").unwrap();
+    assert_eq!(
+        desc.events.len(),
+        microinit::constants::EVENT_RETURN,
+        "describe must return exactly EVENT_RETURN events when the ring is full, got {}",
+        desc.events.len()
+    );
+    // Oldest → newest: last event should be a state_change from the toggles.
+    let last = desc.events.last().expect("non-empty");
+    assert_eq!(last.kind, microinit::protocol::ServiceEventKind::StateChange);
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn describe_deps_lists_are_sorted() {
+    let (sup, dir) = make_sup(vec![
+        job("z", "true", &[], true),
+        job("m", "true", &["z", "a"], true),
+        job("a", "true", &[], true),
+        job("y", "true", &["m"], true),
+        job("b", "true", &["m"], true),
+    ]);
+    sup.boot().unwrap();
+
+    let mid = sup.describe("m").unwrap();
+    let dep_names: Vec<_> = mid.depends_on.iter().map(|n| n.name.as_str()).collect();
+    assert_eq!(dep_names, vec!["a", "z"]);
+    let req_names: Vec<_> = mid.dependents.iter().map(|n| n.name.as_str()).collect();
+    assert_eq!(req_names, vec!["b", "y"]);
+
+    let _ = std::fs::remove_dir_all(dir);
+}
