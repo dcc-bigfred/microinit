@@ -51,6 +51,71 @@ pub struct ServiceStatus {
     pub enabled: bool,
 }
 
+/// Kind of lifecycle event retained for `describe`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ServiceEventKind {
+    /// Every `set_state` transition (`from` → `to`).
+    StateChange,
+    Restart,
+    LivenessFailed,
+}
+
+impl std::fmt::Display for ServiceEventKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::StateChange => "state_change",
+            Self::Restart => "restart",
+            Self::LivenessFailed => "liveness_failed",
+        })
+    }
+}
+
+/// One retained lifecycle event (ring-buffered per service).
+///
+/// Field presence by `kind`:
+/// - `state_change`: `from` and `to` are set; `detail` is omitted
+/// - `restart`: only `ts` + `kind`
+/// - `liveness_failed`: optional `detail` (probe failure reason)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceEvent {
+    /// RFC3339 timestamp with millis.
+    pub ts: String,
+    pub kind: ServiceEventKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<ServiceState>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to: Option<ServiceState>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+/// Service name + live state for dependency listings / graphs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DepNode {
+    pub name: String,
+    pub state: ServiceState,
+}
+
+/// Full `describe` payload for one service.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceDescribe {
+    pub status: ServiceStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uptime_secs: Option<u64>,
+    /// Direct `dependsOn` (who this service needs).
+    pub depends_on: Vec<DepNode>,
+    /// Direct reverse deps (who lists this service in `dependsOn`).
+    pub dependents: Vec<DepNode>,
+    /// All nodes in the transitive dependency subgraph (with states).
+    pub dep_nodes: Vec<DepNode>,
+    /// Edges in the subgraph: `(from, to)` means `to` depends on `from`.
+    pub dep_edges: Vec<(String, String)>,
+    /// Oldest → newest, last [`crate::constants::EVENT_RETURN`] events.
+    pub events: Vec<ServiceEvent>,
+}
+
 /// Log stream / severity for a captured line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -129,6 +194,10 @@ pub enum Request {
     Status {
         name: String,
     },
+    /// Rich status: deps, reverse deps, subgraph, recent lifecycle events.
+    Describe {
+        name: String,
+    },
     Enable {
         name: String,
         enabled: bool,
@@ -159,6 +228,9 @@ pub enum Response {
     },
     Status {
         status: ServiceStatus,
+    },
+    Describe {
+        describe: ServiceDescribe,
     },
     /// One log line in a stream; ends with `Ok` when follow=false and buffer drained.
     Log {
