@@ -53,6 +53,7 @@ type request struct {
 type Response struct {
 	Type     string          `json:"type"`
 	Message  string          `json:"message,omitempty"`
+	Code     string          `json:"code,omitempty"`
 	Services []ServiceStatus `json:"services,omitempty"`
 	Status   *ServiceStatus  `json:"status,omitempty"`
 	Line     *LogLine        `json:"line,omitempty"`
@@ -62,8 +63,22 @@ type Response struct {
 type Client struct {
 	Socket  string
 	Timeout time.Duration
+	// ReadTimeout is the per-frame idle timeout for streaming reads
+	// (FollowLogs). Zero defaults to 30s. Use a larger value on slow
+	// embedded links; use a smaller one to detect a dead server faster.
+	ReadTimeout time.Duration
 	// Dial is overridden in tests.
 	Dial func(network, address string, timeout time.Duration) (net.Conn, error)
+}
+
+// defaultReadTimeout is the per-frame idle deadline for FollowLogs streams.
+const defaultReadTimeout = 30 * time.Second
+
+func (c *Client) readTimeout() time.Duration {
+	if c.ReadTimeout > 0 {
+		return c.ReadTimeout
+	}
+	return defaultReadTimeout
 }
 
 func (c *Client) socketPath() string {
@@ -106,7 +121,7 @@ func (c *Client) List() ([]ServiceStatus, error) {
 		}
 		return resp.Services, nil
 	case "error":
-		return nil, responseError(resp.Message)
+		return nil, responseError(resp)
 	default:
 		return nil, fmt.Errorf("unexpected response type %q", resp.Type)
 	}
@@ -122,7 +137,7 @@ func (c *Client) Status(name string) (*ServiceStatus, error) {
 		return nil, err
 	}
 	if resp.Type == "error" {
-		return nil, responseError(resp.Message)
+		return nil, responseError(resp)
 	}
 	if resp.Type != "status" || resp.Status == nil {
 		return nil, fmt.Errorf("unexpected response type %q", resp.Type)
@@ -148,7 +163,7 @@ func (c *Client) Control(name, action string) error {
 	case "ok":
 		return nil
 	case "error":
-		return responseError(resp.Message)
+		return responseError(resp)
 	default:
 		return fmt.Errorf("unexpected response type %q", resp.Type)
 	}
@@ -165,7 +180,7 @@ func (c *Client) Shutdown() error {
 	case "ok":
 		return nil
 	case "error":
-		return responseError(resp.Message)
+		return responseError(resp)
 	default:
 		return fmt.Errorf("unexpected response type %q", resp.Type)
 	}
@@ -175,6 +190,11 @@ func (c *Client) Shutdown() error {
 //
 // lines < 0 uses the server default buffer size; lines >= 0 requests exactly
 // that many historical lines (0 = live-only, no snapshot).
+//
+// A read deadline is applied per frame by [Client.ReadFrame]; callers using
+// [ReadResponse] must manage deadlines themselves. Follow=true resets the
+// deadline per frame so a quiet but live service does not trip it; a dead
+// server is detected via io.EOF or the read deadline.
 func (c *Client) FollowLogs(name string, lines int, follow bool) (net.Conn, error) {
 	if name != "" {
 		if err := ValidateName(name); err != nil {
@@ -203,9 +223,26 @@ func (c *Client) FollowLogs(name string, lines int, follow bool) (net.Conn, erro
 }
 
 // ReadResponse reads one framed response from a FollowLogs connection.
+// It does not enforce a read deadline; callers wanting idle-timeout
+// protection should use [Client.ReadFrame] instead, or set the deadline
+// on the conn themselves before each call.
 func ReadResponse(r io.Reader) (Response, error) {
 	var resp Response
 	if err := readFrame(r, &resp); err != nil {
+		return Response{}, err
+	}
+	return resp, nil
+}
+
+// ReadFrame reads one framed response from a streaming connection and
+// enforces a per-frame idle read deadline (Client.ReadTimeout, default 30s).
+// Use this for FollowLogs streams so a dead server is detected within the
+// timeout instead of blocking forever. The deadline is reset before each
+// frame, so a quiet-but-live service does not trip it.
+func (c *Client) ReadFrame(conn net.Conn) (Response, error) {
+	_ = conn.SetReadDeadline(time.Now().Add(c.readTimeout()))
+	var resp Response
+	if err := readFrame(conn, &resp); err != nil {
 		return Response{}, err
 	}
 	return resp, nil
@@ -272,20 +309,38 @@ func readFrame(r io.Reader, dest any) error {
 	if n > maxFrameBytes {
 		return fmt.Errorf("frame length %d too large", n)
 	}
-	buf := make([]byte, n)
-	if _, err := io.ReadFull(r, buf); err != nil {
+	// Stream-decode without pre-allocating the full payload: LimitReader caps
+	// the bytes consumed, and json.Decoder grows its internal buffer on demand
+	// rather than reserving n bytes up front. A malicious/buggy server claiming
+	// a huge frame therefore cannot force a 16 MiB allocation in one shot.
+	// microinit frames are exactly the JSON payload with no trailing padding,
+	// so the decoder consumes the whole window and leaves nothing behind.
+	dec := json.NewDecoder(io.LimitReader(r, int64(n)))
+	if err := dec.Decode(dest); err != nil {
 		return err
 	}
-	return json.Unmarshal(buf, dest)
+	return nil
 }
 
-func responseError(message string) error {
-	lower := strings.ToLower(message)
-	if strings.Contains(lower, "unknown") || strings.Contains(lower, "not found") {
+// responseError maps an IPC error response to a typed error. It prefers the
+// stable `code` field (populated by newer microinit for Error::UnknownService
+// etc.) and falls back to substring-matching the human message for older
+// servers that do not send a code.
+func responseError(resp Response) error {
+	switch resp.Code {
+	case "not_found":
 		return ErrNotFound
+	case "disabled":
+		return fmt.Errorf("%s: %w", resp.Message, ErrNotFound)
+	case "":
+		// Legacy server without a code field.
+		lower := strings.ToLower(resp.Message)
+		if strings.Contains(lower, "unknown") || strings.Contains(lower, "not found") {
+			return ErrNotFound
+		}
 	}
-	if message == "" {
-		message = "microinit request failed"
+	if resp.Message == "" {
+		return errors.New("microinit request failed")
 	}
-	return errors.New(message)
+	return errors.New(resp.Message)
 }
