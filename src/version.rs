@@ -9,7 +9,7 @@ use std::mem::MaybeUninit;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-/// ELF section name (must match `scripts/inject-elf-version.sh`).
+/// ELF section name (must match `go run …/cmd/inject-elf-version … .microinit.version`).
 pub const SECTION_NAME: &str = ".microinit.version";
 
 /// Public version payload returned by `microinit info` / IPC.
