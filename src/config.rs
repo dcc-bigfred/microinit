@@ -617,9 +617,15 @@ impl Config {
     ///
     /// Empty allowlist → only the daemon uid may connect; socket stays `0600`.
     /// Non-empty → those uids (plus daemon uid) may connect; socket is `0660`
-    /// owned by `root:<primary gid of first allowed user>`.
+    /// owned by `daemon_uid:<socket_gid>`.
+    ///
+    /// **`socket_gid` is taken from the first entry** in `socketAllowUsers`:
+    /// prefer a group whose name matches the login (e.g. `bigfred:bigfred`),
+    /// else the user's primary gid from passwd. Later entries are allowed by
+    /// uid check only — they must share that group (or be root) to open a
+    /// `0660` socket. Put the intended socket group owner first.
     pub fn resolved_ipc_allow(&self) -> Result<crate::ipc::IpcAllow> {
-        use nix::unistd::{Gid, Group, User};
+        use nix::unistd::{Group, Uid, User};
         let mut allow_uids = Vec::new();
         let mut socket_gid: Option<u32> = None;
         for raw in &self.socket_allow_users {
@@ -631,9 +637,7 @@ impl Config {
             }
             let u = User::from_name(name)
                 .map_err(|e| Error::Config(format!("socketAllowUsers lookup '{name}': {e}")))?
-                .ok_or_else(|| {
-                    Error::Config(format!("socketAllowUsers: unknown user '{name}'"))
-                })?;
+                .ok_or_else(|| Error::Config(format!("socketAllowUsers: unknown user '{name}'")))?;
             allow_uids.push(u.uid.as_raw());
             if socket_gid.is_none() {
                 // Prefer the user's primary group name matching the login when
@@ -643,11 +647,11 @@ impl Config {
                     .flatten()
                     .map(|g| g.gid.as_raw())
                     .unwrap_or_else(|| u.gid.as_raw());
-                let _ = Gid::from_raw(gid);
                 socket_gid = Some(gid);
             }
         }
         Ok(crate::ipc::IpcAllow {
+            daemon_uid: Uid::current().as_raw(),
             allow_uids,
             socket_gid,
         })

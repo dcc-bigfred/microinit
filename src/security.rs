@@ -265,9 +265,10 @@ pub fn resolve(ctx: &SecurityContext) -> Result<Option<ResolvedIdentity>> {
 /// Order: keepcaps → bounding-set drop → initgroups (or setgroups([])) →
 /// setgid → setuid → capset + ambient → `PR_SET_NO_NEW_PRIVS`.
 ///
-/// When a passwd username is known, [`unistd::initgroups`] installs that
+/// When `runAsUser` was a **login name**, [`unistd::initgroups`] installs that
 /// user's supplementary groups from `/etc/group` (e.g. `bigfred` ∈ `dialout`).
-/// Numeric uids without a passwd entry keep the fail-closed `setgroups([])`.
+/// Numeric uid strings keep the fail-closed `setgroups([])` even if passwd
+/// has a matching entry.
 ///
 /// # Safety
 ///
@@ -336,17 +337,22 @@ pub fn apply_pre_exec(ident: &ResolvedIdentity) -> Result<()> {
 fn apply_groups(ident: &ResolvedIdentity) -> Result<()> {
     use std::ffi::CString;
     if ident.named_user {
-        if let (Some(ref name), Some(gid)) = (&ident.username, ident.gid) {
-        let cname = CString::new(name.as_str()).map_err(|_| {
-            Error::Security(format!("username '{name}' contains NUL"))
-        })?;
+        let (name, gid) = match (&ident.username, ident.gid) {
+            (Some(n), Some(g)) => (n, g),
+            _ => {
+                return Err(Error::Security(
+                    "named_user set but username/gid missing (invariant violated)".into(),
+                ));
+            }
+        };
+        let cname = CString::new(name.as_str())
+            .map_err(|_| Error::Security(format!("username '{name}' contains NUL")))?;
         unistd::initgroups(&cname, Gid::from_raw(gid)).map_err(|e| {
             Error::Security(format!(
                 "initgroups({name}, {gid}): {e} (required when runAsUser/runAsGroup is set)"
             ))
         })?;
-            return Ok(());
-        }
+        return Ok(());
     }
     unistd::setgroups(&[]).map_err(|e| {
         Error::Security(format!(

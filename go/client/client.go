@@ -211,8 +211,10 @@ func (c *Client) Control(name, action string) error {
 	}
 }
 
-// Shutdown requests a halt-mode shutdown (used when stopping a supervise
-// instance started by the caller).
+// Shutdown requests a halt-mode shutdown. Prefer [Client.ShutdownMode] when
+// you need reboot/poweroff (e.g. host power control). Halt is for stopping a
+// supervise instance started by the caller (CLI / embedder); BigFred's admin
+// HTTP API does not expose halt to the UI.
 func (c *Client) Shutdown() error {
 	return c.ShutdownMode("halt")
 }
@@ -220,6 +222,10 @@ func (c *Client) Shutdown() error {
 // ShutdownMode requests a machine/process shutdown with mode reboot|poweroff|halt.
 // In supervise mode microinit ignores the machine power aspect and exits after
 // stopping services; in init mode it finalizes via reboot(2).
+//
+// Modes:
+//   - reboot / poweroff — host power (init mode); used by BigFred admin UI
+//   - halt — process exit after stopping services; for direct SDK/CLI use only
 func (c *Client) ShutdownMode(mode string) error {
 	switch mode {
 	case "reboot", "poweroff", "halt":
