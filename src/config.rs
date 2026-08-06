@@ -461,6 +461,10 @@ pub struct Config {
     pub socket: String,
     #[serde(default = "default_console")]
     pub console: String,
+    /// Extra Unix-socket peer uids allowed besides the daemon's own uid.
+    /// Login names resolved against `/etc/passwd` at load time (fail-closed).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub socket_allow_users: Vec<String>,
     #[serde(default)]
     pub open_telemetry: OpenTelemetryConfig,
     #[serde(default)]
@@ -486,6 +490,7 @@ impl Default for Config {
             logs: LogsConfig::default(),
             socket: default_socket(),
             console: default_console(),
+            socket_allow_users: Vec::new(),
             open_telemetry: OpenTelemetryConfig::default(),
             services: Vec::new(),
         }
@@ -603,7 +608,53 @@ impl Config {
                 }
             }
         }
+        // Fail-closed: unknown names in socketAllowUsers abort config load.
+        let _ = self.resolved_ipc_allow()?;
         Ok(())
+    }
+
+    /// Resolve [`Self::socket_allow_users`] into IPC peer allowlist + socket group.
+    ///
+    /// Empty allowlist → only the daemon uid may connect; socket stays `0600`.
+    /// Non-empty → those uids (plus daemon uid) may connect; socket is `0660`
+    /// owned by `daemon_uid:<socket_gid>`.
+    ///
+    /// **`socket_gid` is taken from the first entry** in `socketAllowUsers`:
+    /// prefer a group whose name matches the login (e.g. `bigfred:bigfred`),
+    /// else the user's primary gid from passwd. Later entries are allowed by
+    /// uid check only — they must share that group (or be root) to open a
+    /// `0660` socket. Put the intended socket group owner first.
+    pub fn resolved_ipc_allow(&self) -> Result<crate::ipc::IpcAllow> {
+        use nix::unistd::{Group, Uid, User};
+        let mut allow_uids = Vec::new();
+        let mut socket_gid: Option<u32> = None;
+        for raw in &self.socket_allow_users {
+            let name = raw.trim();
+            if name.is_empty() {
+                return Err(Error::Config(
+                    "socketAllowUsers entry must not be empty".into(),
+                ));
+            }
+            let u = User::from_name(name)
+                .map_err(|e| Error::Config(format!("socketAllowUsers lookup '{name}': {e}")))?
+                .ok_or_else(|| Error::Config(format!("socketAllowUsers: unknown user '{name}'")))?;
+            allow_uids.push(u.uid.as_raw());
+            if socket_gid.is_none() {
+                // Prefer the user's primary group name matching the login when
+                // present (e.g. bigfred:bigfred); otherwise use passwd gid.
+                let gid = Group::from_name(name)
+                    .ok()
+                    .flatten()
+                    .map(|g| g.gid.as_raw())
+                    .unwrap_or_else(|| u.gid.as_raw());
+                socket_gid = Some(gid);
+            }
+        }
+        Ok(crate::ipc::IpcAllow {
+            daemon_uid: Uid::current().as_raw(),
+            allow_uids,
+            socket_gid,
+        })
     }
 
     pub fn get_mut(&mut self, name: &str) -> Option<&mut ServiceConfig> {
@@ -791,6 +842,7 @@ pub fn example_config() -> Config {
         },
         socket: DEFAULT_SOCKET.to_string(),
         console: DEFAULT_CONSOLE.to_string(),
+        socket_allow_users: Vec::new(),
         open_telemetry: OpenTelemetryConfig::default(),
         services: vec![
             ServiceConfig {

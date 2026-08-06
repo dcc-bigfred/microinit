@@ -204,6 +204,12 @@ pub fn run(opts: InitOpts) -> Result<()> {
     let config_path = opts.paths.config.clone();
     let dropins_dir = opts.paths.dropins_dir.clone();
 
+    let mode = if opts.machine_shutdown {
+        crate::protocol::DaemonMode::Init
+    } else {
+        crate::protocol::DaemonMode::Supervise
+    };
+    let ipc_allow = cfg.resolved_ipc_allow()?;
     let supervisor = Supervisor::new(
         cfg,
         hub.clone(),
@@ -211,6 +217,7 @@ pub fn run(opts: InitOpts) -> Result<()> {
         override_path,
         config_path,
         dropins_dir,
+        mode,
     );
 
     let sup = Arc::clone(&supervisor);
@@ -218,6 +225,7 @@ pub fn run(opts: InitOpts) -> Result<()> {
     ipc::serve(
         Path::new(&socket_path),
         Arc::new(move |req, stream| handle_ipc(req, stream, &sup, &hub_ipc, lines_default)),
+        ipc_allow,
     )?;
     hub.emit_init(LogLevel::Info, format!("IPC listening on {socket_path}"));
 

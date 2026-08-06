@@ -286,6 +286,8 @@ pub struct Supervisor {
     exits: Arc<ExitRegistry>,
     ctl: Mutex<HashMap<String, std::sync::mpsc::Sender<CtlMsg>>>,
     started_at: Instant,
+    /// Boot mode (`init` vs `supervise`); fixed for process lifetime.
+    mode: crate::protocol::DaemonMode,
 }
 
 enum CtlMsg {
@@ -303,6 +305,7 @@ impl Supervisor {
         override_path: PathBuf,
         config_path: PathBuf,
         dropins_dir: PathBuf,
+        mode: crate::protocol::DaemonMode,
     ) -> Arc<Self> {
         let mut runtimes = HashMap::new();
         for svc in &config.services {
@@ -323,6 +326,7 @@ impl Supervisor {
             exits: global_exits(),
             ctl: Mutex::new(HashMap::new()),
             started_at: Instant::now(),
+            mode,
         })
     }
 
@@ -735,6 +739,7 @@ impl Supervisor {
             hostname: crate::version::hostname(),
             uptime_secs: self.started_at.elapsed().as_secs(),
             socket,
+            mode: self.mode,
             services_total,
             services_running,
             otel_enabled: otel.enable,

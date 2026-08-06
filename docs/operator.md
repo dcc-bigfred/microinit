@@ -172,7 +172,12 @@ HTTP / TCP examples:
 | `runAsGroup` | Group name **or** numeric gid; optional when the user has a passwd entry (defaults to primary gid). **Required** for numeric uids with no passwd entry |
 | `capabilities` | Linux capability names (`CAP_` prefix optional). The list is **exclusive** (replaces the parent's capability set; it is not additive) |
 
-Supplementary groups are cleared with `setgroups([])` (fail-closed). Environments that deny `setgroups` (e.g. user namespaces with `/proc/self/setgroups=deny`) cannot use `runAsUser`/`runAsGroup`.
+Supplementary groups come from **`initgroups(3)`** using the passwd username
+when `runAsUser` resolves to a named account (so memberships in `/etc/group`,
+e.g. `dialout`, apply). Numeric uids without a passwd entry still use
+`setgroups([])` (fail-closed — no inherited root groups). Environments that
+deny `setgroups` (e.g. user namespaces with `/proc/self/setgroups=deny`) cannot
+use `runAsUser`/`runAsGroup`.
 
 After the drop, microinit also:
 - shrinks the capability **bounding set** to the requested caps (or empty),

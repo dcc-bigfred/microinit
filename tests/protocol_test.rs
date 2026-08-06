@@ -15,6 +15,22 @@ fn service_state_display() {
 }
 
 #[test]
+fn daemon_mode_wire_roundtrip() {
+    for (mode, wire) in [
+        (DaemonMode::Init, "init"),
+        (DaemonMode::Supervise, "supervise"),
+    ] {
+        assert_eq!(mode.as_str(), wire);
+        assert_eq!(mode.to_string(), wire);
+        let json = serde_json::to_string(&mode).unwrap();
+        assert_eq!(json, format!("\"{wire}\""));
+        let back: DaemonMode = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, mode);
+    }
+    assert!(serde_json::from_str::<DaemonMode>("\"unknown\"").is_err());
+}
+
+#[test]
 fn request_response_serde_roundtrip() {
     let cases = vec![
         Request::List,
@@ -56,6 +72,7 @@ fn request_response_serde_roundtrip() {
         "hostname": "hub",
         "uptime_secs": 60,
         "socket": "/data/run/microinit.sock",
+        "mode": "init",
         "services_total": 2,
         "services_running": 1,
         "otel_enabled": true,

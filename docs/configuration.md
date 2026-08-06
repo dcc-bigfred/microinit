@@ -199,6 +199,14 @@ microinit list
 Requires **microinit restart** (on PID 1 hosts: reboot):
 
 - `socket` path
+- `socketAllowUsers` — optional list of login names allowed to connect to the
+  control socket in addition to the daemon uid (resolved via passwd at load;
+  unknown names abort config). When non-empty, the socket is `0660` owned by
+  `daemon_uid:<group of the first name>` (prefer a group matching the login,
+  else that user's primary gid — typically `bigfred:bigfred` on the hub).
+  **Order matters:** later names are allowed by uid peer-check only; they must
+  still be able to open a `0660` socket for that group (put the intended
+  socket-group owner first).
 - `logs.*` (TTYs, `logToFiles`, buffer size)
 - `console`
 

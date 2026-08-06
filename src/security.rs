@@ -153,6 +153,8 @@ pub struct ResolvedIdentity {
     pub home: Option<String>,
     /// Suggested `USER` / `LOGNAME` from passwd (best-effort).
     pub username: Option<String>,
+    /// `true` when `runAsUser` was a login name (not a numeric uid string).
+    pub named_user: bool,
 }
 
 impl ResolvedIdentity {
@@ -188,6 +190,7 @@ pub fn resolve(ctx: &SecurityContext) -> Result<Option<ResolvedIdentity>> {
     let mut primary_gid: Option<u32> = None;
     let mut home: Option<String> = None;
     let mut username: Option<String> = None;
+    let mut named_user = false;
 
     if let Some(ref user_spec) = ctx.run_as_user {
         let spec = user_spec.trim();
@@ -206,6 +209,7 @@ pub fn resolve(ctx: &SecurityContext) -> Result<Option<ResolvedIdentity>> {
                 )));
             }
         } else {
+            named_user = true;
             let u = User::from_name(spec)
                 .map_err(|e| Error::Security(format!("lookup user '{spec}': {e}")))?
                 .ok_or_else(|| Error::Security(format!("unknown user '{spec}'")))?;
@@ -247,6 +251,7 @@ pub fn resolve(ctx: &SecurityContext) -> Result<Option<ResolvedIdentity>> {
         caps,
         home,
         username,
+        named_user,
     };
     if ident.is_noop() {
         Ok(None)
@@ -257,8 +262,13 @@ pub fn resolve(ctx: &SecurityContext) -> Result<Option<ResolvedIdentity>> {
 
 /// Apply identity in the child after fork, before exec.
 ///
-/// Order: keepcaps → bounding-set drop → setgroups([]) → setgid → setuid →
-/// capset + ambient → `PR_SET_NO_NEW_PRIVS`.
+/// Order: keepcaps → bounding-set drop → initgroups (or setgroups([])) →
+/// setgid → setuid → capset + ambient → `PR_SET_NO_NEW_PRIVS`.
+///
+/// When `runAsUser` was a **login name**, [`unistd::initgroups`] installs that
+/// user's supplementary groups from `/etc/group` (e.g. `bigfred` ∈ `dialout`).
+/// Numeric uid strings keep the fail-closed `setgroups([])` even if passwd
+/// has a matching entry.
 ///
 /// # Safety
 ///
@@ -287,15 +297,12 @@ pub fn apply_pre_exec(ident: &ResolvedIdentity) -> Result<()> {
     // Shrink the capability bounding set while still privileged.
     drop_bounding_set(&ident.caps)?;
 
-    // Fail-closed: when dropping uid/gid we must clear supplementary groups.
+    // Fail-closed vs inheriting the parent's (often root) supplementary groups.
+    // Prefer initgroups(username) so /etc/group memberships (e.g. dialout) apply.
     // User namespaces with `/proc/self/setgroups=deny` are unsupported for
     // securityContext identity drops.
     if drop_id {
-        unistd::setgroups(&[]).map_err(|e| {
-            Error::Security(format!(
-                "setgroups: {e} (required when runAsUser/runAsGroup is set)"
-            ))
-        })?;
+        apply_groups(ident)?;
     }
 
     if let Some(gid) = ident.gid {
@@ -324,6 +331,34 @@ pub fn apply_pre_exec(ident: &ResolvedIdentity) -> Result<()> {
         )));
     }
 
+    Ok(())
+}
+
+fn apply_groups(ident: &ResolvedIdentity) -> Result<()> {
+    use std::ffi::CString;
+    if ident.named_user {
+        let (name, gid) = match (&ident.username, ident.gid) {
+            (Some(n), Some(g)) => (n, g),
+            _ => {
+                return Err(Error::Security(
+                    "named_user set but username/gid missing (invariant violated)".into(),
+                ));
+            }
+        };
+        let cname = CString::new(name.as_str())
+            .map_err(|_| Error::Security(format!("username '{name}' contains NUL")))?;
+        unistd::initgroups(&cname, Gid::from_raw(gid)).map_err(|e| {
+            Error::Security(format!(
+                "initgroups({name}, {gid}): {e} (required when runAsUser/runAsGroup is set)"
+            ))
+        })?;
+        return Ok(());
+    }
+    unistd::setgroups(&[]).map_err(|e| {
+        Error::Security(format!(
+            "setgroups: {e} (required when runAsUser/runAsGroup is set)"
+        ))
+    })?;
     Ok(())
 }
 

@@ -59,6 +59,7 @@ Daemon build/runtime snapshot: version (ELF release section or `dev`), build com
 | `hostname` | Host name |
 | `uptime_secs` | Seconds since supervisor start |
 | `socket` | IPC socket path |
+| `mode` | `init` (machine reboot/poweroff) or `supervise` (process exit only) |
 | `services_total` | Registered services |
 | `services_running` | Services in `running` state |
 | `otel_enabled` | Effective telemetry on/off |

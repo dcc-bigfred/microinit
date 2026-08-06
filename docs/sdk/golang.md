@@ -180,7 +180,8 @@ err = config.WriteDropin(dropinDir, "infra", "redis", svc)
 | `List()` | All services |
 | `Status(name)` | One service |
 | `Control(name, start\|stop\|restart)` | Lifecycle |
-| `Shutdown()` | Halt-mode shutdown (IPC) |
+| `Shutdown()` | Halt-mode shutdown (IPC); alias of `ShutdownMode("halt")` |
+| `ShutdownMode(mode)` | Shutdown with `reboot` \| `poweroff` \| `halt` |
 | `FollowLogs` / `ReadResponse` | Log stream |
 | `ValidateName` / `FormatLogLine` | Helpers |
 

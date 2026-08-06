@@ -101,6 +101,7 @@ fn print_daemon_info(info: &DaemonInfo) {
         print!(" {}", info.build_time);
     }
     println!();
+    println!("Mode:        {}", info.mode);
     println!("PID:         {}", info.pid);
     println!("Hostname:    {}", info.hostname);
     println!("Uptime:      {}", format_uptime(Some(info.uptime_secs)));
