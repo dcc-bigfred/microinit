@@ -2,7 +2,8 @@
 //!
 //! - **Build-time:** `build_commit` / `build_time` from `build.rs` env.
 //! - **Post-build:** optional ELF section `.microinit.version` JSON
-//!   `{"version":"v1.2.3","commit":"abc1234"}` injected by release retag.
+//!   `{"version":"v1.2.3","commit":"abc1234"}` injected at release
+//!   (`go run …/cmd/inject-elf-version … .microinit.version`).
 
 use std::fs;
 use std::mem::MaybeUninit;
