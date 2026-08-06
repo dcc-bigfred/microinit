@@ -155,46 +155,6 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-  publish-oci:
-    name: Publish OCI artifact to GHCR (ORAS)
-    needs: build
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download arm64 binaries
-        uses: actions/download-artifact@v4
-        with:
-          name: binaries-arm64
-          path: dist/
-
-      - name: Set up ORAS
-        uses: oras-project/setup-oras@v1
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Publish microinit-linux-arm64
-        run: ./scripts/publish-oci-microinit.sh dist/microinit-linux-arm64 dist/early-boot.sh dist/unmount.sh dist/shutdown-linux-arm64
-
-      - name: Job summary
-        run: |
-          {
-            echo "### OCI publish (ORAS)"
-            echo ""
-            echo "- Image: \`ghcr.io/dcc-bigfred/microinit-linux-arm64\`"
-            echo "- Tags: \`main\`, \`sha-${GITHUB_SHA::7}\`"
-          } >> "$GITHUB_STEP_SUMMARY"
-
   build-android:
     name: Build Android (${{ matrix.name }})
     needs: test
@@ -260,52 +220,6 @@ jobs:
           path: dist/
           if-no-files-found: error
           retention-days: 90
-
-  publish-oci-android:
-    name: Publish Android OCI artifact to GHCR (ORAS)
-    needs: build-android
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download Android arm64 binaries
-        uses: actions/download-artifact@v4
-        with:
-          name: binaries-android-arm64
-          path: dist/
-
-      - name: Set up ORAS
-        uses: oras-project/setup-oras@v1
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Publish microinit-android-arm64
-        run: |
-          set -euo pipefail
-          microinit=dist/libmicroinit.so
-          shutdown=dist/libshutdown.so
-          [[ -f "${microinit}" ]] || microinit=dist/microinit-android-arm64
-          [[ -f "${shutdown}" ]] || shutdown=dist/shutdown-android-arm64
-          ./scripts/publish-oci-microinit-android.sh "${microinit}" "${shutdown}"
-
-      - name: Job summary
-        run: |
-          {
-            echo "### Android OCI publish (ORAS)"
-            echo ""
-            echo "- Image: \`ghcr.io/dcc-bigfred/microinit-android-arm64\`"
-            echo "- Tags: \`main\`, \`sha-${GITHUB_SHA::7}\`"
-          } >> "$GITHUB_STEP_SUMMARY"
 
   publish-image:
     name: Publish distroless container image
