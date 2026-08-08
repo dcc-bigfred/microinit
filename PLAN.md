@@ -165,6 +165,7 @@ Jesli `/data/etc/microinit.json` nie istnieje: utworz katalog rekursywnie, zapis
 | startWaitSecs | int | 0 | dla daemon=true: ile sekund czekac po starcie; proces musi przezyc okno (wyjscie = Failed). Przy 0: krotki grace SysV, exit w successExitCodes = Running |
 | shutdownWaitSecs | int | 5 | po sygnale stop / stopCmd czekaj N s, potem SIGKILL |
 | background | bool | false | true=start rownolegle, nie blokuje boot |
+| orderPriority | int | 100 | wsrod gotowych uslug (dependsOn OK): nizszy = wczesniejszy start; remis = alfabetycznie po name |
 | dependsOn | [string] | [] | uslugi, ktore musza osiagnac settled przed startem |
 | cmd | string? | null | bazowa komenda (fallback dla start/stop/restart) |
 | startCmd/stopCmd/restartCmd | string? | null | konkretne komendy |
@@ -216,9 +217,11 @@ stateDiagram-v2
 ## 7. Sortowanie i kolejnosc boot
 
 - Buduj DAG z `dependsOn`. Wykryj cykle -> blad na console + log.
-- **Foreground** uslugi startuja w porzadku topologicznym, sekwencyjnie (kazda czeka na settled przed nastepna).
-- **Background** uslugi startuja rownolegle w osobnych watkach, gdy ich `dependsOn` sa settled.
+- Wsrod uslug gotowych (indegree 0) wybieraj zawsze min `(orderPriority, name)` — nizszy priority wczesniej; remis alfabetycznie.
+- **Foreground** uslugi startuja w tej kolejnosci topologicznej, sekwencyjnie (kazda czeka na settled przed nastepna).
+- **Background** uslugi startuja rownolegle (najpierw wszystkie background w kolejnosci topo, potem foreground).
 - To rozdziela szybkie uslugi (foreground: mount, network, sysctl) od dlugich demonow (background: grafana, bigfred).
+- Shutdown: odwrotnosc kolejnosci startu.
 
 ## 8. IPC - socket uniksowy
 

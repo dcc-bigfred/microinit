@@ -77,9 +77,12 @@ Each service has, among other fields:
 - whether it is a daemon (long-lived) or a one-shot job,  
 - whether to restart on crash,  
 - dependencies (`dependsOn`),  
+- start order among ready peers (`orderPriority`, default 100 — lower first),  
 - wait times on start and on shutdown.
 
 **Dependencies:** when start is requested (boot or CLI) and a `dependsOn` service is not yet `Running`/`Succeeded`, the dependent enters **`waiting_for_dependency`** and stays there until every dependency is ready, then starts automatically. A manual `stop` (or disable) cancels that wait — satisfying the dependency later does **not** restart a stopped service.
+
+**Ordering:** boot builds a topological order from `dependsOn`, always picking the ready service with the lowest `(orderPriority, name)`. See [Service ordering](configuration.md#service-ordering).
 
 **Execution model:** one **monitor thread per service**. A shared main loop handles signals, zombie reaping, and socket commands. Child processes are collected by a central **reaper** (so multiple places do not race on `waitpid`).
 

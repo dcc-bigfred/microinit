@@ -102,6 +102,7 @@ Most operators only edit **`services`**.
   "restartBackoff": 2,
   "startWaitSecs": 1,
   "shutdownWaitSecs": 5,
+  "orderPriority": 100,
   "dependsOn": ["network"],
   "cmd": "/etc/init.d/myapp",
   "cwd": "/"
@@ -126,6 +127,7 @@ Or explicit commands:
   "name": "network",
   "daemon": false,
   "restart": false,
+  "orderPriority": 30,
   "cmd": "/etc/init.d/network"
 }
 ```
@@ -144,6 +146,7 @@ Success → `succeeded`. Failure → `failed`.
 | `startWaitSecs` | After start, wait; if process dies in window → `failed` |
 | `shutdownWaitSecs` | After stop, wait then `SIGKILL` |
 | `background` | Parallel start at boot |
+| `orderPriority` | Among ready services, lower starts earlier (default `100`; equal → alphabetical name) |
 | `dependsOn` | These must be `running` or `succeeded` first |
 | `livenessProbe` | Optional health check; failure triggers restart |
 
@@ -212,6 +215,99 @@ Requires **microinit restart** (on PID 1 hosts: reboot):
 
 ---
 
+## Service ordering
+
+Boot and shutdown order come from a topological sort of `dependsOn`, with
+`orderPriority` as the tie-breaker among services that are currently ready.
+
+**Rules (in order):**
+
+1. `dependsOn` builds a hard DAG — a service cannot start before its
+   dependencies.
+2. Among services with all dependencies satisfied (ready), pick the lowest
+   `orderPriority` first.
+3. Equal `orderPriority` → alphabetical `name`.
+4. That list is split into foreground / background for boot parallelism.
+5. Shutdown uses the **reverse** of the start order.
+
+Default when the field is omitted: **`100`**.
+
+Do **not** confuse this with drop-in **merge** order (files sorted by path
+alphabetically; later file wins for the same service name) — that only decides
+which definition is kept, not boot order.
+
+### Example 1 — priority only (no deps)
+
+```json
+[
+  { "name": "cron", "orderPriority": 50 },
+  { "name": "sysctl", "orderPriority": 10 },
+  { "name": "watchdog", "orderPriority": 20 }
+]
+```
+
+Start order: `sysctl` → `watchdog` → `cron`.
+
+### Example 2 — same priority → alphabetical
+
+```json
+[
+  { "name": "redis", "orderPriority": 100 },
+  { "name": "alloy", "orderPriority": 100 },
+  { "name": "microdns", "orderPriority": 100 }
+]
+```
+
+Start order: `alloy` → `microdns` → `redis`.
+
+### Example 3 — `dependsOn` blocks; then priority among ready
+
+```json
+[
+  { "name": "network", "orderPriority": 30 },
+  { "name": "app", "orderPriority": 10, "dependsOn": ["network"] },
+  { "name": "cron", "orderPriority": 50 }
+]
+```
+
+1. Ready at start: `network` (30), `cron` (50) → start **`network`**.
+2. After `network`: ready `app` (10) and `cron` (50) → **`app`**, then **`cron`**.
+
+Start order: `network` → `app` → `cron`.  
+(`app` has a lower priority than `cron`, but cannot overtake `network`.)
+
+### Example 4 — shutdown = reverse
+
+For example 3: stop `cron` → `app` → `network`.
+
+### Example 5 — mini hub
+
+| name | orderPriority | dependsOn |
+|------|---------------|-----------|
+| sysctl | 10 | — |
+| network | 30 | — |
+| redis | 100 | network |
+| bigfred | 300 | network, redis |
+| grafana | 400 | — |
+
+Start: `sysctl` → `network` → `redis` → `bigfred` → `grafana`.  
+Shutdown: `grafana` → `bigfred` → `redis` → `network` → `sysctl`.
+
+(On a real hub image, `grafana` also `dependsOn` `victoriametrics`; the table
+above is simplified.)
+
+### Example 6 — `background` vs `orderPriority`
+
+`orderPriority` only orders the topological list. At boot, microinit still
+starts **all** `background: true` services first (fire-and-forget, in topo
+order), then foreground services sequentially. A low `orderPriority` on a
+foreground service does **not** make it start before background peers.
+
+See also [Operator guide](operator.md) (boot sequence) and
+[Architecture](architecture.md).
+
+---
+
 ## Dependencies
 
 ```json
@@ -227,6 +323,7 @@ microinit start --force myapp   # debugging only
 ```
 
 Boot example with restarts: [Service lifecycle](service-lifecycle.md).
+Ordering of who gets `Start` first: [Service ordering](#service-ordering).
 
 ---
 

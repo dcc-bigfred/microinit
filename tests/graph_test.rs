@@ -7,6 +7,10 @@ use microinit::error::Error;
 use microinit::graph::*;
 
 fn svc(name: &str, deps: &[&str], bg: bool) -> ServiceConfig {
+    svc_prio(name, deps, bg, 100)
+}
+
+fn svc_prio(name: &str, deps: &[&str], bg: bool, order_priority: u64) -> ServiceConfig {
     ServiceConfig {
         name: name.into(),
         enabled: true,
@@ -17,6 +21,7 @@ fn svc(name: &str, deps: &[&str], bg: bool) -> ServiceConfig {
         start_wait_secs: 0,
         shutdown_wait_secs: 5,
         background: bg,
+        order_priority,
         depends_on: deps.iter().map(|s| (*s).to_string()).collect(),
         cmd: Some(format!("/bin/true-{name}")),
         start_cmd: None,
@@ -102,4 +107,48 @@ fn independent_roots_sorted_alphabetically() {
         svc("a", &[], false),
     ];
     assert_eq!(topological_sort(&services).unwrap(), vec!["a", "m", "z"]);
+}
+
+#[test]
+fn independent_roots_sorted_by_order_priority() {
+    let services = vec![
+        svc_prio("cron", &[], false, 50),
+        svc_prio("sysctl", &[], false, 10),
+        svc_prio("watchdog", &[], false, 20),
+    ];
+    assert_eq!(
+        topological_sort(&services).unwrap(),
+        vec!["sysctl", "watchdog", "cron"]
+    );
+}
+
+#[test]
+fn equal_priority_falls_back_to_name() {
+    let services = vec![
+        svc_prio("redis", &[], false, 100),
+        svc_prio("alloy", &[], false, 100),
+        svc_prio("microdns", &[], false, 100),
+    ];
+    assert_eq!(
+        topological_sort(&services).unwrap(),
+        vec!["alloy", "microdns", "redis"]
+    );
+}
+
+#[test]
+fn depends_on_blocks_then_priority_wins_among_ready() {
+    // network(30) and cron(50) ready first → network; then app(10) and cron → app, cron.
+    let services = vec![
+        svc_prio("network", &[], false, 30),
+        svc_prio("app", &["network"], false, 10),
+        svc_prio("cron", &[], false, 50),
+    ];
+    assert_eq!(
+        topological_sort(&services).unwrap(),
+        vec!["network", "app", "cron"]
+    );
+    assert_eq!(
+        shutdown_order(&services).unwrap(),
+        vec!["cron", "app", "network"]
+    );
 }

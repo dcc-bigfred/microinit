@@ -5,7 +5,7 @@ Guides and references for running and integrating **microinit**.
 | Document | Audience | Contents |
 |----------|----------|----------|
 | [Operator guide](operator.md) | Linux admins / device operators | Everyday CLI, boot, quick config overview |
-| [Configuration](configuration.md) | Administrators | JSON files, drop-ins in subfolders, hot reload, service fields |
+| [Configuration](configuration.md) | Administrators | JSON files, drop-ins, service fields, **service ordering** |
 | [Service lifecycle](service-lifecycle.md) | Administrators | States over time; dependency when a service restarts at boot |
 | [Using as supervisord](using-as-supervisord.md) | Container / VM admins | `supervise` mode; PHP-FPM + NGINX with drop-ins and hot reload |
 | [Control socket API](api.md) | Integrators / UI / scripts | Unix socket framing, request/response JSON |

@@ -108,6 +108,13 @@ Seconds to wait after stop signal / stopCmd before sending
 .Pq default 5
 .It Cm background
 Start in parallel; does not block boot (default false)
+.It Cm orderPriority
+Among currently ready services, lower values start earlier
+.Pq default 100 .
+Equal values fall back to alphabetical
+.Cm name .
+Does not override
+.Cm dependsOn .
 .It Cm dependsOn
 Services that must be
 .Cm Running

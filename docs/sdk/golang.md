@@ -39,8 +39,11 @@ Service configs may include `labels` (`map[string]string`). Convention for embed
 ```go
 svc := config.WithCreatedBy(config.ServiceDef{
 	Name: "worker", StartCmd: "exec /usr/bin/worker",
+	OrderPriority: config.IntPtr(100), // optional; omitted → daemon default 100
 }, "my-app")
 // writes labels: {"created-by":"my-app"}
+// OrderPriority: among ready services, lower starts earlier (nil omits the field;
+// microinit then applies default 100). Pointer to 0 is serialized as 0.
 
 // Filter a List() result:
 for _, s := range list {

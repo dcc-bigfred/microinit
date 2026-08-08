@@ -83,7 +83,10 @@ and apply
 .Xr microinit.services.enabled-override.json 5
 .It
 Topologically sort services by
-.Cm dependsOn
+.Cm dependsOn ,
+breaking ties with
+.Cm orderPriority
+.Pq lower first; equal → alphabetical name
 .It
 Start enabled services; print
 .Bq OK

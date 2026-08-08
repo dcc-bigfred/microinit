@@ -1,13 +1,21 @@
 //! Dependency graph: DAG build + topological sort.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::config::ServiceConfig;
 use crate::error::{Error, Result};
 
 /// Topologically sorted service names. Detects cycles.
+///
+/// Among services that are currently ready (`indegree == 0`), always picks the
+/// global minimum of `(order_priority, name)`. Lower `orderPriority` starts
+/// earlier; equal priority falls back to alphabetical name.
 pub fn topological_sort(services: &[ServiceConfig]) -> Result<Vec<String>> {
     let names: HashSet<&str> = services.iter().map(|s| s.name.as_str()).collect();
+    let prio: HashMap<&str, u64> = services
+        .iter()
+        .map(|s| (s.name.as_str(), s.order_priority))
+        .collect();
     let mut indegree: HashMap<&str, usize> = HashMap::new();
     let mut adj: HashMap<&str, Vec<&str>> = HashMap::new();
 
@@ -31,33 +39,25 @@ pub fn topological_sort(services: &[ServiceConfig]) -> Result<Vec<String>> {
         }
     }
 
-    let mut queue: VecDeque<&str> = indegree
+    let mut ready: BTreeSet<(u64, &str)> = indegree
         .iter()
         .filter(|(_, &d)| d == 0)
-        .map(|(&n, _)| n)
+        .map(|(&n, _)| (*prio.get(n).unwrap_or(&100), n))
         .collect();
-    // Stable order among ready nodes: alphabetical among those with indegree 0 initially,
-    // then FIFO. For determinism, sort the initial queue.
-    let mut initial: Vec<&str> = queue.drain(..).collect();
-    initial.sort_unstable();
-    queue.extend(initial);
 
     let mut order = Vec::with_capacity(services.len());
-    while let Some(n) = queue.pop_front() {
+    while let Some((_, n)) = ready.pop_first() {
         order.push(n.to_string());
         if let Some(children) = adj.get(n) {
-            let mut next_ready = Vec::new();
             for &c in children {
                 let Some(d) = indegree.get_mut(c) else {
                     continue;
                 };
                 *d -= 1;
                 if *d == 0 {
-                    next_ready.push(c);
+                    ready.insert((*prio.get(c).unwrap_or(&100), c));
                 }
             }
-            next_ready.sort_unstable();
-            queue.extend(next_ready);
         }
     }
 

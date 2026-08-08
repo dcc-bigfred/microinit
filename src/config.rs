@@ -245,6 +245,10 @@ pub struct ServiceConfig {
     pub shutdown_wait_secs: u64,
     #[serde(default)]
     pub background: bool,
+    /// Among currently ready services (`dependsOn` satisfied), lower values
+    /// start earlier. Equal values fall back to alphabetical name. Default 100.
+    #[serde(default = "default_order_priority")]
+    pub order_priority: u64,
     #[serde(default)]
     pub depends_on: Vec<String>,
     #[serde(default)]
@@ -316,6 +320,10 @@ fn default_shutdown_wait() -> u64 {
 
 fn default_cwd() -> String {
     "/".to_string()
+}
+
+fn default_order_priority() -> u64 {
+    100
 }
 
 const LABEL_KEY_MAX: usize = 63;
@@ -855,6 +863,7 @@ pub fn example_config() -> Config {
                 start_wait_secs: 0,
                 shutdown_wait_secs: 5,
                 background: false,
+                order_priority: 30,
                 depends_on: vec![],
                 cmd: Some("/etc/init.d/network".into()),
                 start_cmd: None,
@@ -887,6 +896,7 @@ pub fn example_config() -> Config {
                 start_wait_secs: 0,
                 shutdown_wait_secs: 5,
                 background: false,
+                order_priority: 100,
                 depends_on: vec!["network".into()],
                 cmd: Some("/etc/init.d/redis".into()),
                 start_cmd: None,
@@ -910,6 +920,7 @@ pub fn example_config() -> Config {
                 start_wait_secs: 0,
                 shutdown_wait_secs: 5,
                 background: true,
+                order_priority: 210,
                 depends_on: vec!["network".into()],
                 cmd: None,
                 start_cmd: Some(format!(
