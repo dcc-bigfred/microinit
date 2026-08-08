@@ -106,17 +106,17 @@ func (h *Host) EnsureRunning(ctx context.Context) (joined bool, err error) {
 		return false, fmt.Errorf("microinit process is running but IPC is unavailable (socket %s)", h.Socket)
 	}
 	if h.DropinDir != "" {
-		if err := os.MkdirAll(h.DropinDir, 0o755); err != nil {
+		if err := config.MkdirAllBestEffortParents(h.DropinDir, 0o755); err != nil {
 			return false, fmt.Errorf("create microinit drop-in dir %s: %w", h.DropinDir, err)
 		}
 	}
 	if h.ConfigPath != "" {
-		if err := os.MkdirAll(filepath.Dir(h.ConfigPath), 0o755); err != nil {
+		if err := config.MkdirAllBestEffortParents(filepath.Dir(h.ConfigPath), 0o755); err != nil {
 			return false, fmt.Errorf("create microinit config dir %s: %w", filepath.Dir(h.ConfigPath), err)
 		}
 	}
 	if sockDir := filepath.Dir(h.Socket); sockDir != "" && sockDir != "." {
-		if err := os.MkdirAll(sockDir, 0o755); err != nil {
+		if err := config.MkdirAllBestEffortParents(sockDir, 0o755); err != nil {
 			return false, fmt.Errorf("create microinit socket dir %s: %w", sockDir, err)
 		}
 	}
@@ -311,7 +311,7 @@ func (h *Host) pidFilePath() string {
 
 func (h *Host) writePidFile(pid int) error {
 	path := h.pidFilePath()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := config.MkdirAllBestEffortParents(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
 	starttime, err := procStartTime(pid)

@@ -52,7 +52,7 @@ func SyncGroup(dir, group string, desired map[string]ServiceDef) error {
 		return err
 	}
 	groupDir := filepath.Join(dir, group)
-	if err := os.MkdirAll(groupDir, 0o755); err != nil {
+	if err := MkdirAllBestEffortParents(groupDir, 0o755); err != nil {
 		return err
 	}
 	entries, err := os.ReadDir(groupDir)
@@ -127,7 +127,7 @@ func DropinExists(dir, group, name string) bool {
 
 // WriteFileAtomically creates parent dirs and renames into place.
 func WriteFileAtomically(path string, content []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := MkdirAllBestEffortParents(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".tmp-*")
