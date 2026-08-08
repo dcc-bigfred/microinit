@@ -145,6 +145,7 @@ mod tests {
             start_wait_secs: 0,
             shutdown_wait_secs: 5,
             background: false,
+            order_priority: 100,
             depends_on: vec![],
             cmd: None,
             start_cmd: Some("true".into()),

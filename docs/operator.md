@@ -121,6 +121,7 @@ If `startCmd` is set, it is used instead of `cmd start`. Prefer **`exec` of the 
 | `startWaitSecs` | After start, wait this long; if the process dies in that window → `failed`. Use `1` (or more) when the start command **stays** as the service process |
 | `shutdownWaitSecs` | After stop, wait then `SIGKILL` |
 | `background` | At boot, start in parallel (does not wait for the console `[ OK ]` sequence as long) |
+| `orderPriority` | Among ready services, lower starts earlier (default `100`; equal → name A–Z). See [Service ordering](configuration.md#service-ordering) |
 | `dependsOn` | Other service names that must be `running` or `succeeded` first |
 | `env` / `cwd` | Extra environment and working directory |
 | `livenessProbe` | Optional periodic check. Exactly one of `cmd`, `httpUrl`, or `tcpAddr`. Shared: `interval` (default `60`), `timeout` (default `5`). `cmd` uses `successExitCodes` (default `[0]`); `httpUrl` uses `httpMethod` (default `GET`) and `httpAcceptedCodes` (default `[200]`); `tcpAddr` is `host:port`. Runs while `running` / `succeeded` / `failed`; failure re-runs start |
@@ -281,11 +282,11 @@ microinit start --force redis   # debugging only
 1. Kernel starts `/sbin/init` (microinit).  
 2. **Early-boot** (mount `/data`, seed config, …).  
 3. Config loaded from disk.  
-4. Enabled services start (`dependsOn` order; `background: true` in parallel).  
+4. Enabled services start in topological order (`dependsOn` hard edges; among ready services lower `orderPriority` first, then name). `background: true` services are started first (in that order), then foreground sequentially. Details: [Service ordering](configuration.md#service-ordering).  
 5. Console `[ OK ]` / `[ FAIL ]`; getty.  
 6. IPC socket; JSON files watched for reload.  
 
-On shutdown in **`init`** mode (`shutdown -r`, IPC `shutdown`, SIGTERM, …): services stop in reverse dependency order, then the **unmount** script runs (unbind mounts / umount `/data`), then reboot or power-off.
+On shutdown in **`init`** mode (`shutdown -r`, IPC `shutdown`, SIGTERM, …): services stop in **reverse** of that start order, then the **unmount** script runs (unbind mounts / umount `/data`), then reboot or power-off.
 
 In **`supervise`** mode there is no early-boot, getty, late unmount, or machine reboot — only the supervisor + socket (good for containers). On shutdown it stops services, syncs, and exits.
 

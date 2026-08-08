@@ -2,6 +2,8 @@
 
 This page shows **what happens over time** — not just a list of states, but a realistic boot story: one service keeps crashing and restarting, and another waits until the first one is finally healthy.
 
+Which service receives `Start` first at boot is decided by [Service ordering](configuration.md#service-ordering) (`dependsOn` + `orderPriority`).
+
 ---
 
 ## States you will see

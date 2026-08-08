@@ -10,6 +10,8 @@ type ServiceDef struct {
 	RestartBackoff   *int              `json:"restartBackoff,omitempty"`
 	StartWaitSecs    *int              `json:"startWaitSecs,omitempty"`
 	ShutdownWaitSecs *int              `json:"shutdownWaitSecs,omitempty"`
+	// OrderPriority: among ready services, lower starts earlier (default 100).
+	OrderPriority    *int              `json:"orderPriority,omitempty"`
 	DependsOn        []string          `json:"dependsOn,omitempty"`
 	StartCmd         string            `json:"startCmd,omitempty"`
 	StopCmd          string            `json:"stopCmd,omitempty"`

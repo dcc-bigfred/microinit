@@ -28,7 +28,8 @@
       "stopCmd": null,
       "restartCmd": null,
       "env": {},
-      "cwd": "/"
+      "cwd": "/",
+      "orderPriority": 30
     },
     {
       "name": "redis",
@@ -50,7 +51,8 @@
       "stopCmd": null,
       "restartCmd": null,
       "env": {},
-      "cwd": "/"
+      "cwd": "/",
+      "orderPriority": 100
     },
     {
       "name": "remote-icmp",
@@ -78,7 +80,8 @@
         "capabilities": [
           "CAP_NET_RAW"
         ]
-      }
+      },
+      "orderPriority": 210
     }
   ]
 }
