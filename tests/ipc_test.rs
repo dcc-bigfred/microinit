@@ -106,3 +106,80 @@ fn serve_list_roundtrip() {
     let _ = std::fs::remove_file(&sock);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+fn list_handler() -> Handler {
+    Arc::new(|req, stream| {
+        match req {
+            Request::List => write_frame(stream, &Response::List { services: vec![] })?,
+            _ => write_frame(
+                stream,
+                &Response::Error {
+                    message: "no".into(),
+                    code: None,
+                },
+            )?,
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn serve_refuses_second_listener_on_live_socket() {
+    let dir = std::env::temp_dir().join(format!(
+        "microinit-ipc-live-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let sock = dir.join("test.sock");
+
+    serve(&sock, list_handler(), IpcAllow::default()).unwrap();
+    thread::sleep(std::time::Duration::from_millis(50));
+
+    let err = serve(&sock, list_handler(), IpcAllow::default()).unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("already running"),
+        "expected already running, got {msg}"
+    );
+
+    let resp = request(&sock, &Request::List).unwrap();
+    assert!(matches!(resp, Response::List { .. }));
+
+    let _ = std::fs::remove_file(&sock);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn serve_replaces_stale_socket_file() {
+    use std::os::unix::net::UnixListener;
+
+    let dir = std::env::temp_dir().join(format!(
+        "microinit-ipc-stale-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let sock = dir.join("test.sock");
+
+    let leftover = UnixListener::bind(&sock).unwrap();
+    drop(leftover);
+    assert!(sock.exists());
+
+    serve(&sock, list_handler(), IpcAllow::default()).unwrap();
+    thread::sleep(std::time::Duration::from_millis(50));
+
+    let resp = request(&sock, &Request::List).unwrap();
+    assert!(matches!(resp, Response::List { .. }));
+
+    let _ = std::fs::remove_file(&sock);
+    let _ = std::fs::remove_dir_all(&dir);
+}

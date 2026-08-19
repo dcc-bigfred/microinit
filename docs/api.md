@@ -4,6 +4,8 @@ microinit exposes a **Unix domain stream socket** for control and logs. The CLI 
 
 Default path: **`$DATA_DIR/run/microinit.sock`** (hub default **`/data/run/microinit.sock`**; overridable with `--socket` on both the daemon and clients, or via the `socket` field in JSON config). The daemon creates the socket's parent directory if it does not exist.
 
+Only **one** daemon may listen on a given socket path. A second `microinit init` / `supervise` that finds a live peer refuses to start (`already running`) and does **not** unlink the inode. A leftover `.sock` file after a crash (connect gets `ENOENT` / `ECONNREFUSED`) is removed and replaced.
+
 ---
 
 ## Framing

@@ -135,18 +135,58 @@ pub type Handler = Arc<dyn Fn(Request, &mut UnixStream) -> Result<()> + Send + S
 /// When `allow.allow_uids` is non-empty, the socket is immediately set to
 /// `0660` and `chown`ed to `daemon_uid:<allow.socket_gid>` (fail-closed if
 /// gid missing). Otherwise the socket stays `0600` (daemon-uid-only).
-pub fn serve(socket_path: &Path, handler: Handler, allow: IpcAllow) -> Result<()> {
-    if let Some(parent) = socket_path.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent).map_err(|e| Error::io_at(parent, e))?;
+///
+/// Refuses to start if another process is already listening on `socket_path`
+/// (`already running`). A leftover `.sock` file after a crash is unlinked and
+/// reused.
+/// Bind the control socket without stealing a live daemon's inode.
+///
+/// 1. `connect` — if a peer answers, refuse (`already running`); do not unlink.
+/// 2. `NotFound` / `ConnectionRefused` — leftover inode (or nothing) → unlink, then bind.
+/// 3. Any other connect error is returned as-is (do not unlink a mystery path).
+fn bind_singleton(socket_path: &Path) -> Result<UnixListener> {
+    match UnixStream::connect(socket_path) {
+        Ok(stream) => {
+            let pid = peer_pid(&stream);
+            let where_ = if pid != 0 {
+                format!("{} (pid {pid})", socket_path.display())
+            } else {
+                socket_path.display().to_string()
+            };
+            return Err(Error::Ipc(format!("microinit already running at {where_}")));
         }
+        Err(e) if is_stale_socket_connect_error(&e) => {}
+        Err(e) => return Err(Error::io_at(socket_path, e)),
     }
     match std::fs::remove_file(socket_path) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(Error::io_at(socket_path, e)),
     }
-    let listener = UnixListener::bind(socket_path).map_err(|e| Error::io_at(socket_path, e))?;
+    UnixListener::bind(socket_path).map_err(|e| Error::io_at(socket_path, e))
+}
+
+fn is_stale_socket_connect_error(err: &std::io::Error) -> bool {
+    matches!(
+        err.kind(),
+        std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
+    )
+}
+
+fn peer_pid(stream: &UnixStream) -> u32 {
+    use nix::sys::socket::{getsockopt, sockopt::PeerCredentials};
+    getsockopt(stream, PeerCredentials)
+        .map(|c| c.pid() as u32)
+        .unwrap_or(0)
+}
+
+pub fn serve(socket_path: &Path, handler: Handler, allow: IpcAllow) -> Result<()> {
+    if let Some(parent) = socket_path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| Error::io_at(parent, e))?;
+        }
+    }
+    let listener = bind_singleton(socket_path)?;
     apply_socket_perms(socket_path, &allow)?;
 
     let path = socket_path.to_path_buf();
