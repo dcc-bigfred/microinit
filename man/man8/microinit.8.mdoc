@@ -47,6 +47,11 @@
 .Op Ar name
 .Op Fl -follow
 .Op Fl -lines Ns = Ns Ar N
+.Nm
+.Op Fl -socket Ns = Ns Ar path
+.Cm watch
+.Op Fl -label-key Ns = Ns Ar key
+.Op Fl o Ar human|json
 .Sh DESCRIPTION
 .Nm
 is a PID 1 init system that loads a declarative JSON service list, starts
@@ -193,6 +198,7 @@ microinit start redis
 microinit start --force alloy
 microinit restart redis
 microinit logs alloy --follow
+microinit watch --label-key microdns-port
 microinit disable dropbear
 .Ed
 .Pp
@@ -226,6 +232,22 @@ prints a status line on stdout: either that the service is starting, that it is
 or
 .Pq with Fl -force
 that it is starting despite unmet dependencies.
+.Pp
+.Cm watch
+streams coalesced
+.Cm list
+snapshots until interrupted
+.Pq same Unix-socket framing as
+.Cm logs Fl -follow Ns
+. No trailing
+.Cm ok ;
+idle connections receive a heartbeat every 10 seconds.
+.Fl -label-key
+.Pq repeatable
+keeps only services that possess every listed key
+.Pq presence, any value .
+.Fl o Ar json
+prints one JSON array of services per snapshot.
 .Sh SEE ALSO
 .Xr microinit.json 5 ,
 .Xr microinit.services.enabled-override.json 5 ,

@@ -31,6 +31,7 @@ use crate::protocol::{
 use crate::reaper::{ensure_reaper_thread, global_exits, ExitRegistry};
 use crate::service::{run_shell, spawn_shell, terminate_pid};
 use crate::syncutil::mutex_lock;
+use crate::watch::{WatchHub, WatchSub};
 
 /// Internal ring entry: timestamp is `Copy` so the hot `set_state` path
 /// does not allocate; RFC3339 formatting happens only in `describe`.
@@ -288,6 +289,7 @@ pub struct Supervisor {
     started_at: Instant,
     /// Boot mode (`init` vs `supervise`); fixed for process lifetime.
     mode: crate::protocol::DaemonMode,
+    watch: WatchHub,
 }
 
 enum CtlMsg {
@@ -327,6 +329,7 @@ impl Supervisor {
             ctl: Mutex::new(HashMap::new()),
             started_at: Instant::now(),
             mode,
+            watch: WatchHub::new(),
         })
     }
 
@@ -348,6 +351,40 @@ impl Supervisor {
                 })
             })
             .collect()
+    }
+
+    /// Subscribe to coalesced `list` snapshots. `None` if at follower cap.
+    ///
+    /// Seeds the new follower with the current [`Self::list`] so the first
+    /// `wait_timeout` returns immediately.
+    pub fn watch_subscribe(&self, label_keys: Vec<String>) -> Option<WatchSub> {
+        let sub = self.watch.try_subscribe(label_keys)?;
+        debug_assert!(self.watch.follower_count() >= 1);
+        self.notify_watchers();
+        Some(sub)
+    }
+
+    /// Fan out the current list when any watchers exist.
+    ///
+    /// # Allocation
+    ///
+    /// When there are no watchers this is a single atomic load. Otherwise it
+    /// clones the service list (same cost as [`Self::list`]).
+    fn notify_watchers(&self) {
+        if self.watch.follower_count() == 0 {
+            return;
+        }
+        self.watch.publish(self.list());
+    }
+
+    fn apply_state(&self, name: &str, state: ServiceState, pid: Option<i32>) {
+        self.shared.set_state(name, state, pid);
+        self.notify_watchers();
+    }
+
+    fn apply_enabled(&self, name: &str, enabled: bool) {
+        self.shared.set_enabled(name, enabled);
+        self.notify_watchers();
     }
 
     pub fn status(&self, name: &str) -> Result<ServiceStatus> {
@@ -630,7 +667,7 @@ impl Supervisor {
                 if enabled { "enable" } else { "disable" }
             ),
         );
-        self.shared.set_enabled(name, enabled);
+        self.apply_enabled(name, enabled);
         if enabled {
             self.send_ctl(name, CtlMsg::Start { force: false })?;
         } else {
@@ -847,7 +884,7 @@ impl Supervisor {
             };
 
             if old_svc.enabled != svc.enabled {
-                self.shared.set_enabled(&svc.name, svc.enabled);
+                self.apply_enabled(&svc.name, svc.enabled);
                 if svc.enabled {
                     let _ = self.send_ctl(&svc.name, CtlMsg::Start { force: false });
                 } else {
@@ -869,6 +906,7 @@ impl Supervisor {
 
         self.hub
             .emit(INIT_SERVICE, LogLevel::Info, "configuration reloaded");
+        self.notify_watchers();
         Ok(())
     }
 
@@ -881,7 +919,7 @@ impl Supervisor {
                 if let Ok(cfg) = self.service_cfg(&name) {
                     self.stop_tracked(&cfg, &mut tracked);
                 }
-                self.shared.set_state(&name, ServiceState::Stopped, None);
+                self.apply_state(&name, ServiceState::Stopped, None);
                 break;
             }
 
@@ -902,20 +940,20 @@ impl Supervisor {
                 match msg {
                     CtlMsg::Quit => {
                         self.stop_tracked(&cfg, &mut tracked);
-                        self.shared.set_state(&name, ServiceState::Stopped, None);
+                        self.apply_state(&name, ServiceState::Stopped, None);
                         break;
                     }
                     CtlMsg::Stop => {
                         self.hub
                             .emit(INIT_SERVICE, LogLevel::Info, format!("stopping {name}"));
-                        self.shared.set_state(&name, ServiceState::Stopping, None);
+                        self.apply_state(&name, ServiceState::Stopping, None);
                         self.stop_tracked(&cfg, &mut tracked);
                         next_liveness = None;
                         let enabled = self.shared.is_enabled(&name).unwrap_or(true);
                         if enabled {
-                            self.shared.set_state(&name, ServiceState::Stopped, None);
+                            self.apply_state(&name, ServiceState::Stopped, None);
                         } else {
-                            self.shared.set_state(&name, ServiceState::Disabled, None);
+                            self.apply_state(&name, ServiceState::Disabled, None);
                         }
                         continue;
                     }
@@ -926,7 +964,7 @@ impl Supervisor {
                         if let Ok(restart) = cfg.resolve_restart() {
                             let code = run_shell(&restart, &cfg, &HashMap::new()).unwrap_or(1);
                             if cfg.daemon && cfg.is_success(code) {
-                                self.shared.set_state(&name, ServiceState::Running, None);
+                                self.apply_state(&name, ServiceState::Running, None);
                                 next_liveness = Self::schedule_liveness(&cfg);
                                 continue;
                             }
@@ -934,7 +972,7 @@ impl Supervisor {
                         if let Err(e) = self.do_start(&cfg, &mut tracked, false) {
                             self.hub
                                 .emit(INIT_SERVICE, LogLevel::Error, format!("{name}: {e}"));
-                            self.shared.set_state(&name, ServiceState::Failed, None);
+                            self.apply_state(&name, ServiceState::Failed, None);
                         }
                         next_liveness = Self::schedule_liveness(&cfg);
                         continue;
@@ -946,7 +984,7 @@ impl Supervisor {
                         if let Err(e) = self.do_start(&cfg, &mut tracked, force) {
                             self.hub
                                 .emit(INIT_SERVICE, LogLevel::Error, format!("{name}: {e}"));
-                            self.shared.set_state(&name, ServiceState::Failed, None);
+                            self.apply_state(&name, ServiceState::Failed, None);
                         }
                         next_liveness = Self::schedule_liveness(&cfg);
                         continue;
@@ -972,7 +1010,7 @@ impl Supervisor {
                         if let Err(e) = self.do_start(&cfg, &mut tracked, false) {
                             self.hub
                                 .emit(INIT_SERVICE, LogLevel::Error, format!("{name}: {e}"));
-                            self.shared.set_state(&name, ServiceState::Failed, None);
+                            self.apply_state(&name, ServiceState::Failed, None);
                         }
                         next_liveness = Self::schedule_liveness(&cfg);
                     }
@@ -1035,8 +1073,7 @@ impl Supervisor {
 
         if outcome.is_ok() {
             if matches!(state, ServiceState::Failed) && !cfg.daemon {
-                self.shared
-                    .set_state(&cfg.name, ServiceState::Succeeded, None);
+                self.apply_state(&cfg.name, ServiceState::Succeeded, None);
             }
             return;
         }
@@ -1050,8 +1087,7 @@ impl Supervisor {
             LogLevel::Warn,
             format!("{}: livenessProbe failed ({reason}), restarting", cfg.name),
         );
-        self.shared
-            .set_state(&cfg.name, ServiceState::Restarting, None);
+        self.apply_state(&cfg.name, ServiceState::Restarting, None);
         self.shared.bump_liveness_failures(&cfg.name, Some(reason));
         self.shared.bump_restarts(&cfg.name);
         self.stop_tracked(cfg, tracked);
@@ -1061,7 +1097,7 @@ impl Supervisor {
                 LogLevel::Error,
                 format!("{}: liveness restart: {e}", cfg.name),
             );
-            self.shared.set_state(&cfg.name, ServiceState::Failed, None);
+            self.apply_state(&cfg.name, ServiceState::Failed, None);
         }
         *next_liveness = Self::schedule_liveness(cfg);
     }
@@ -1088,7 +1124,7 @@ impl Supervisor {
         code: i32,
     ) {
         let name = &cfg.name;
-        self.shared.set_state(name, ServiceState::Pending, None);
+        self.apply_state(name, ServiceState::Pending, None);
         let success = cfg.is_success(code);
         let enabled = self.shared.is_enabled(name).unwrap_or(true);
 
@@ -1098,7 +1134,7 @@ impl Supervisor {
             } else {
                 ServiceState::Failed
             };
-            self.shared.set_state(name, st, None);
+            self.apply_state(name, st, None);
             return;
         }
 
@@ -1110,11 +1146,11 @@ impl Supervisor {
             } else {
                 ServiceState::Failed
             };
-            self.shared.set_state(name, st, None);
+            self.apply_state(name, st, None);
             return;
         }
 
-        self.shared.set_state(name, ServiceState::Restarting, None);
+        self.apply_state(name, ServiceState::Restarting, None);
         self.shared.bump_restarts(name);
         self.hub.emit(
             INIT_SERVICE,
@@ -1128,7 +1164,7 @@ impl Supervisor {
         if let Err(e) = self.do_start(cfg, tracked, false) {
             self.hub
                 .emit(INIT_SERVICE, LogLevel::Error, format!("{name}: {e}"));
-            self.shared.set_state(name, ServiceState::Failed, None);
+            self.apply_state(name, ServiceState::Failed, None);
         }
     }
 
@@ -1140,7 +1176,7 @@ impl Supervisor {
     ) -> Result<()> {
         let name = &cfg.name;
         if !self.shared.is_enabled(name)? {
-            self.shared.set_state(name, ServiceState::Disabled, None);
+            self.apply_state(name, ServiceState::Disabled, None);
             return Err(Error::Disabled(name.clone()));
         }
 
@@ -1158,8 +1194,7 @@ impl Supervisor {
                     ),
                 );
             }
-            self.shared
-                .set_state(name, ServiceState::WaitingForDependency, None);
+            self.apply_state(name, ServiceState::WaitingForDependency, None);
             return Ok(());
         }
 
@@ -1177,7 +1212,7 @@ impl Supervisor {
             }
         }
 
-        self.shared.set_state(name, ServiceState::Starting, None);
+        self.apply_state(name, ServiceState::Starting, None);
         let cmd = cfg.resolve_start()?;
 
         let mut c = spawn_shell(&cmd, cfg)?;
@@ -1220,11 +1255,11 @@ impl Supervisor {
                 if cfg.start_wait_secs == 0 && cfg.is_success(code) {
                     // SysV-style script daemonized and exited (only when not
                     // explicitly waiting for the process to stay up).
-                    self.shared.set_state(name, ServiceState::Running, None);
+                    self.apply_state(name, ServiceState::Running, None);
                     *tracked = None;
                     return Ok(());
                 }
-                self.shared.set_state(name, ServiceState::Failed, None);
+                self.apply_state(name, ServiceState::Failed, None);
                 return Err(Error::Service(
                     name.clone(),
                     if cfg.start_wait_secs > 0 {
@@ -1234,8 +1269,7 @@ impl Supervisor {
                     },
                 ));
             }
-            self.shared
-                .set_state(name, ServiceState::Running, Some(pid));
+            self.apply_state(name, ServiceState::Running, Some(pid));
             *tracked = Some(pid);
             Ok(())
         } else {
@@ -1244,15 +1278,15 @@ impl Supervisor {
                 let _ = self
                     .exits
                     .wait_take(pid, Duration::from_secs(STOP_GRACE_SECS));
-                self.shared.set_state(name, ServiceState::Failed, None);
+                self.apply_state(name, ServiceState::Failed, None);
                 return Err(Error::Service(name.clone(), "job timed out".into()));
             };
             *tracked = None;
             if cfg.is_success(code) {
-                self.shared.set_state(name, ServiceState::Succeeded, None);
+                self.apply_state(name, ServiceState::Succeeded, None);
                 Ok(())
             } else {
-                self.shared.set_state(name, ServiceState::Failed, None);
+                self.apply_state(name, ServiceState::Failed, None);
                 Err(Error::Service(
                     name.clone(),
                     format!("exited with code {code}"),

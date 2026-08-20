@@ -55,6 +55,9 @@ fn request_response_serde_roundtrip() {
             output: DescribeOutput::Human,
         },
         Request::Info,
+        Request::Watch {
+            label_keys: vec!["microdns-port".into()],
+        },
     ];
     for req in cases {
         let json = serde_json::to_string(&req).unwrap();
@@ -232,4 +235,21 @@ fn request_tagged_type_field() {
     let v: serde_json::Value = serde_json::from_str(r#"{"type":"start","name":"redis"}"#).unwrap();
     let req: Request = serde_json::from_value(v).unwrap();
     assert!(matches!(req, Request::Start { name, force: false } if name == "redis"));
+}
+
+#[test]
+fn watch_request_defaults_empty_label_keys() {
+    let req: Request = serde_json::from_str(r#"{"type":"watch"}"#).unwrap();
+    match req {
+        Request::Watch { label_keys } => assert!(label_keys.is_empty()),
+        other => panic!("unexpected {other:?}"),
+    }
+    let req: Request =
+        serde_json::from_str(r#"{"type":"watch","label_keys":["microdns-port"]}"#).unwrap();
+    match req {
+        Request::Watch { label_keys } => {
+            assert_eq!(label_keys, vec!["microdns-port"]);
+        }
+        other => panic!("unexpected {other:?}"),
+    }
 }

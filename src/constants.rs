@@ -32,6 +32,13 @@ pub const MAX_IPC_CLIENTS: usize = 32;
 pub const MAX_EXIT_REGISTRY_ENTRIES: usize = 4096;
 /// Max live `microinit logs --follow` subscribers.
 pub const MAX_LOG_FOLLOWERS: usize = 16;
+/// Max live `microinit watch` subscribers. Independent of log followers.
+/// Excess clients receive `{code: busy}`; the oldest is not dropped (a silent
+/// drop would desynchronize mDNS / other snapshot consumers).
+pub const MAX_WATCH_FOLLOWERS: usize = 8;
+/// Keepalive interval on `watch` streams so clients with idle read deadlines
+/// do not disconnect a quiet but healthy subscription.
+pub const WATCH_HEARTBEAT: Duration = Duration::from_secs(10);
 /// Poll interval while waiting for a process to exit after SIGTERM.
 pub const TERMINATE_POLL: Duration = Duration::from_millis(100);
 /// Per-service lifecycle event ring capacity (bounded memory).

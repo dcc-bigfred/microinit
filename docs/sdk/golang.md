@@ -186,6 +186,7 @@ err = config.WriteDropin(dropinDir, "infra", "redis", svc)
 | `Shutdown()` | Halt-mode shutdown (IPC); alias of `ShutdownMode("halt")` |
 | `ShutdownMode(mode)` | Shutdown with `reboot` \| `poweroff` \| `halt` |
 | `FollowLogs` / `ReadResponse` | Log stream |
+| `Watch` / `ReadFrame` | Coalesced service-list snapshots (`label_keys` filter) |
 | `ValidateName` / `FormatLogLine` | Helpers |
 
 ## config API (summary)

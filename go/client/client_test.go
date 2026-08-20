@@ -104,11 +104,12 @@ func handleFake(conn net.Conn) {
 }
 
 type fakeReq struct {
-	Type   string  `json:"type"`
-	Name   string  `json:"name"`
-	Follow *bool   `json:"follow"`
-	Lines  *uint64 `json:"lines"`
-	Mode   string  `json:"mode"`
+	Type      string   `json:"type"`
+	Name      string   `json:"name"`
+	Follow    *bool    `json:"follow"`
+	Lines     *uint64  `json:"lines"`
+	Mode      string   `json:"mode"`
+	LabelKeys []string `json:"label_keys"`
 }
 
 func readReq(r io.Reader) (fakeReq, error) {

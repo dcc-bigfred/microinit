@@ -310,6 +310,14 @@ pub enum Request {
     Shutdown {
         mode: ShutdownMode,
     },
+    /// Stream coalesced `list` snapshots until the client disconnects.
+    ///
+    /// `label_keys`: service must possess every listed key (presence, any
+    /// value). Empty / omitted = all services.
+    Watch {
+        #[serde(default)]
+        label_keys: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -30,6 +30,13 @@ pub fn matches_selectors(labels: &BTreeMap<String, String>, want: &[(String, Str
         .all(|(k, v)| labels.get(k).map(|have| have == v).unwrap_or(false))
 }
 
+/// True when `labels` contains every key in `keys` (presence, any value).
+/// Empty `keys` always matches.
+#[must_use]
+pub fn has_keys(labels: &BTreeMap<String, String>, keys: &[String]) -> bool {
+    keys.iter().all(|k| labels.contains_key(k))
+}
+
 /// Format labels as `k=v,k=v` (BTreeMap order).
 pub fn format_labels(labels: &BTreeMap<String, String>) -> String {
     labels
@@ -81,6 +88,19 @@ mod tests {
         assert!(!matches_selectors(
             &labels,
             &[("missing".into(), "x".into())]
+        ));
+    }
+
+    #[test]
+    fn has_keys_presence() {
+        let mut labels = BTreeMap::new();
+        labels.insert("microdns-port".into(), "8080".into());
+        assert!(has_keys(&labels, &[]));
+        assert!(has_keys(&labels, &["microdns-port".into()]));
+        assert!(!has_keys(&labels, &["microdns-type".into()]));
+        assert!(!has_keys(
+            &labels,
+            &["microdns-port".into(), "microdns-type".into()]
         ));
     }
 }

@@ -7,7 +7,8 @@ use std::path::Path;
 use crate::error::{Error, Result};
 use crate::ipc::{read_frame, request, write_frame};
 use crate::protocol::{
-    DaemonInfo, DepNode, Request, Response, ServiceDescribe, ServiceEvent, ShutdownMode,
+    DaemonInfo, DepNode, Request, Response, ServiceDescribe, ServiceEvent, ServiceStatus,
+    ShutdownMode,
 };
 
 /// Result of parsing SysV-style `shutdown` argv (excluding `--socket`).
@@ -515,6 +516,64 @@ pub fn cmd_logs(
             Response::Error { message, .. } => return Err(Error::Ipc(message)),
             other => return Err(Error::Ipc(format!("unexpected: {other:?}"))),
         }
+    }
+    Ok(())
+}
+
+/// Stream coalesced `list` snapshots (`microinit watch`).
+pub fn cmd_watch(socket: &Path, label_keys: &[String], json: bool) -> Result<()> {
+    let mut stream = crate::ipc::connect(socket)?;
+    write_frame(
+        &mut stream,
+        &Request::Watch {
+            label_keys: label_keys.to_vec(),
+        },
+    )?;
+
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+    loop {
+        let resp: Response = read_frame(&mut stream)?;
+        match resp {
+            Response::List { services } => {
+                if json {
+                    writeln!(
+                        out,
+                        "{}",
+                        serde_json::to_string(&services)
+                            .map_err(|e| Error::Ipc(format!("serialize watch: {e}")))?
+                    )?;
+                } else {
+                    print_list_table(&mut out, &services)?;
+                    writeln!(out)?;
+                }
+                out.flush()?;
+            }
+            Response::Heartbeat => {}
+            Response::Error { message, .. } => return Err(Error::Ipc(message)),
+            other => return Err(Error::Ipc(format!("unexpected: {other:?}"))),
+        }
+    }
+}
+
+fn print_list_table(out: &mut impl Write, services: &[ServiceStatus]) -> Result<()> {
+    writeln!(
+        out,
+        "{:<20} {:<22} {:>8} {:>8} {:>8} {:>10}",
+        "NAME", "STATE", "PID", "RESTARTS", "ENABLED", "LIVE_FAIL"
+    )?;
+    for s in services {
+        let pid = s.pid.map(|p| p.to_string()).unwrap_or_else(|| "-".into());
+        writeln!(
+            out,
+            "{:<20} {:<22} {:>8} {:>8} {:>8} {:>10}",
+            s.name,
+            s.state.to_string(),
+            pid,
+            s.restarts,
+            if s.enabled { "yes" } else { "no" },
+            s.liveness_failures
+        )?;
     }
     Ok(())
 }

@@ -16,8 +16,8 @@ Each message is one **length-prefixed JSON** frame:
 | N | UTF-8 JSON object |
 
 - Maximum payload size: **16 MiB** (`16777216` bytes).  
-- One request per connection is the usual pattern for short commands; `logs` with `follow: true` keeps the connection open and streams many `log` responses.  
-- Concurrent client handlers are capped (32). Excess clients receive an error response.
+- One request per connection is the usual pattern for short commands; `logs` with `follow: true` and `watch` keep the connection open and stream many responses.  
+- Concurrent client handlers are capped (32). Excess clients receive an error response. Live `watch` subscribers are capped separately (8); extra watchers receive `{ "code": "busy" }`.
 
 ---
 
@@ -171,6 +171,29 @@ Disabling stops the service; enabling requests a start (subject to dependencies)
 1. Zero or more `{ "type": "log", "line": { … } }`  
 2. If `follow` is `false`, a final `{ "type": "ok" }`  
 3. If `follow` is `true`, further `log` frames until disconnect (no trailing `ok`)
+
+### `watch`
+
+Stream coalesced service-list snapshots until the client disconnects. Same framing as `logs` follow.
+
+```json
+{ "type": "watch", "label_keys": ["microdns-port"] }
+```
+
+| Field | Default | Meaning |
+|-------|---------|---------|
+| `label_keys` | `[]` (omit) | Service must possess **every** listed key (presence, any value). Empty = all services. |
+
+**Response stream:**
+
+1. One `{ "type": "list", "services": [ … ] }` snapshot immediately  
+2. Further `list` frames when `(name, state, labels)` of the filtered set changes (pid / restart counters do not wake the client)  
+3. `{ "type": "heartbeat" }` every 10 s while idle  
+4. No trailing `ok`; the stream ends when the client disconnects
+
+Rapid changes coalesce to the latest snapshot (bounded slot of one). At most **8** concurrent `watch` clients; extras receive `{ "type": "error", "code": "busy" }`.
+
+Consumers (for example microdns) typically filter with `label_keys` and advertise only rows whose `state` is `running`.
 
 ### `shutdown`
 
@@ -371,7 +394,7 @@ print(call("/data/run/microinit.sock", {"type": "list"}))
 print(call("/data/run/microinit.sock", {"type": "start", "name": "redis", "force": False}))
 ```
 
-For `logs` with `follow: true`, keep reading frames in a loop (each frame has its own 4-byte length prefix).
+For `logs` with `follow: true` or `watch`, keep reading frames in a loop (each frame has its own 4-byte length prefix). Skip `{ "type": "heartbeat" }`.
 
 ---
 

@@ -12,6 +12,7 @@ use microinit::error::Error;
 use microinit::logs::LogHub;
 use microinit::protocol::ServiceState;
 use microinit::supervisor::*;
+use microinit::watch::WaitOutcome;
 use serial_test::serial;
 
 #[derive(Clone, Default)]
@@ -164,6 +165,38 @@ fn boot_jobs_succeed_and_fail() {
     assert_eq!(sup.status("ok").unwrap().state, ServiceState::Succeeded);
     assert_eq!(sup.status("bad").unwrap().state, ServiceState::Failed);
     assert!(sup.list().iter().all(|s| s.enabled));
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn watch_subscribe_filters_and_sees_boot() {
+    let mut svc = job("ok", "true", &[], true);
+    svc.labels.insert("microdns-port".into(), "8080".into());
+    let (sup, dir) = make_sup(vec![svc, job("plain", "true", &[], true)]);
+    let sub = sup
+        .watch_subscribe(vec!["microdns-port".into()])
+        .expect("subscribe");
+    let WaitOutcome::Snapshot { mut gen, services } = sub.wait_timeout(0, Duration::from_secs(1))
+    else {
+        panic!("expected seed snapshot");
+    };
+    assert_eq!(services.len(), 1);
+    assert_eq!(services[0].name, "ok");
+    let mut last_state = services[0].state;
+    sup.boot().unwrap();
+    for _ in 0..30 {
+        if last_state == ServiceState::Succeeded {
+            break;
+        }
+        match sub.wait_timeout(gen, Duration::from_millis(200)) {
+            WaitOutcome::Snapshot { gen: g, services } => {
+                gen = g;
+                last_state = services[0].state;
+            }
+            WaitOutcome::Timeout => {}
+        }
+    }
+    assert_eq!(last_state, ServiceState::Succeeded);
     let _ = std::fs::remove_dir_all(dir);
 }
 
