@@ -42,9 +42,12 @@ microinit disable dropbear
 microinit logs
 microinit logs redis --follow
 microinit logs redis --lines 100
+microinit watch
+microinit watch --label-key microdns-port
+microinit watch -o json
 ```
 
-`list` is the quickest way to see what is going on after boot. For one service — who it depends on, who depends on it, and recent restarts / liveness failures — use `describe`.
+`list` is the quickest way to see what is going on after boot. For one service — who it depends on, who depends on it, and recent restarts / liveness failures — use `describe`. `watch` reprints the list whenever name, state, or labels change (no polling). `--label-key` keeps only services that have that label key.
 
 ### Useful states
 

@@ -12,7 +12,7 @@ use crate::config::{self, Paths, DEFAULT_CONSOLE, DEFAULT_INIT_LOGS_TTY, DEFAULT
 use crate::console::Console;
 #[cfg(feature = "init")]
 use crate::constants::GETTY_RESPAWN_DELAY;
-use crate::constants::INIT_LOOP_SLEEP;
+use crate::constants::{INIT_LOOP_SLEEP, MAX_WATCH_FOLLOWERS, WATCH_HEARTBEAT};
 use crate::error::Result;
 use crate::ipc::{self, write_frame};
 use crate::logs::{boot_note, LogHub};
@@ -20,6 +20,7 @@ use crate::protocol::{LogLevel, Request, Response};
 use crate::reaper::global_exits;
 use crate::signals::{self, take_shutdown};
 use crate::supervisor::Supervisor;
+use crate::watch::WaitOutcome;
 
 pub struct InitOpts {
     pub logs_tty: String,
@@ -483,6 +484,43 @@ fn handle_ipc(
                 }
             } else {
                 write_frame(stream, &Response::Ok { message: None })?;
+            }
+        }
+        Request::Watch { label_keys } => {
+            let Some(sub) = supervisor.watch_subscribe(label_keys) else {
+                write_frame(
+                    stream,
+                    &Response::Error {
+                        message: format!(
+                            "too many concurrent watch clients (max {MAX_WATCH_FOLLOWERS})"
+                        ),
+                        code: Some("busy".into()),
+                    },
+                )?;
+                return Ok(());
+            };
+            let mut seen = 0u64;
+            loop {
+                match sub.wait_timeout(seen, WATCH_HEARTBEAT) {
+                    WaitOutcome::Snapshot { gen, services } => {
+                        seen = gen;
+                        if write_frame(
+                            stream,
+                            &Response::List {
+                                services: (*services).clone(),
+                            },
+                        )
+                        .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    WaitOutcome::Timeout => {
+                        if write_frame(stream, &Response::Heartbeat).is_err() {
+                            break;
+                        }
+                    }
+                }
             }
         }
         Request::Shutdown { mode } => {

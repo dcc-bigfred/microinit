@@ -188,5 +188,61 @@ func TestReadFrameStreamingDecode(t *testing.T) {
 	}
 }
 
+func TestWatchSendsLabelKeys(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "microinit.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	got := make(chan fakeReq, 1)
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		req, err := readReq(conn)
+		if err != nil {
+			return
+		}
+		got <- req
+		_ = writeResp(conn, map[string]any{
+			"type": "list",
+			"services": []map[string]any{
+				{"name": "web", "state": "running", "pid": 1, "restarts": 0, "enabled": true},
+			},
+		})
+	}()
+
+	c := &client.Client{Socket: sock, Timeout: 2 * time.Second}
+	conn, err := c.Watch([]string{"microdns-port"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	select {
+	case req := <-got:
+		if req.Type != "watch" {
+			t.Fatalf("type=%q", req.Type)
+		}
+		if len(req.LabelKeys) != 1 || req.LabelKeys[0] != "microdns-port" {
+			t.Fatalf("label_keys=%v", req.LabelKeys)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for watch request")
+	}
+
+	resp, err := c.ReadFrame(conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Type != "list" || len(resp.Services) != 1 || resp.Services[0].Name != "web" {
+		t.Fatalf("unexpected watch snapshot: %+v", resp)
+	}
+}
+
 // Ensure the unused io import in this file is referenced (writeResp/readReq use it).
 var _ = io.EOF

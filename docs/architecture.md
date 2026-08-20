@@ -211,7 +211,7 @@ flowchart TB
   override --> load
   load --> sup
   watch -->|"reload"| load
-  ipc -->|"start/stop/logs"| sup
+  ipc -->|"start/stop/logs/watch"| sup
   sup --> otel
   otel -->|"OTLP HTTP"| alloy["Grafana Alloy"]
 ```
@@ -225,7 +225,7 @@ flowchart TB
 3. **Safe reload** — a bad file must not tear down the running service set.  
 4. **OTel on by default in the build** — disable only with `--no-default-features`; runtime still needs `openTelemetry.enable`.  
 5. **Linux-first** — inotify, `/proc`, musl/static, nix; not aiming for full cross-platform support.  
-6. **Socket as the only control channel** — CLI and UI speak the same protocol.  
+6. **Socket as the only control channel** — CLI and UI speak the same protocol. `watch` is a coalesced snapshot stream (not polling); log follow remains a separate line stream.  
 7. **Separated log roles** — init operations vs service output; no forced TTYs in containers.
 
 ---

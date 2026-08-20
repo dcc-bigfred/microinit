@@ -124,6 +124,15 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Stream coalesced service-list snapshots until interrupted
+    Watch {
+        /// Require these label keys (presence, any value). Repeatable.
+        #[arg(long = "label-key")]
+        label_key: Vec<String>,
+        /// Output format: `human` (default) or `json` (one object per snapshot)
+        #[arg(short = 'o', long = "output", value_enum, default_value_t = OutputFormat::Human)]
+        output: OutputFormat,
+    },
 }
 
 fn paths_for_config(config_path: &Path) -> config::Paths {
@@ -278,6 +287,11 @@ fn main() -> ExitCode {
             lines,
         } => cli::cmd_logs(&cli.socket, name, follow, lines),
         Commands::Info { json } => cli::cmd_info(&cli.socket, json),
+        Commands::Watch { label_key, output } => cli::cmd_watch(
+            &cli.socket,
+            &label_key,
+            matches!(output, OutputFormat::Json),
+        ),
     };
 
     match result {

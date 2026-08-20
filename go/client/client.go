@@ -64,11 +64,12 @@ type LogLine struct {
 }
 
 type request struct {
-	Type   string  `json:"type"`
-	Name   string  `json:"name,omitempty"`
-	Follow *bool   `json:"follow,omitempty"`
-	Lines  *uint64 `json:"lines,omitempty"`
-	Mode   string  `json:"mode,omitempty"`
+	Type      string   `json:"type"`
+	Name      string   `json:"name,omitempty"`
+	Follow    *bool    `json:"follow,omitempty"`
+	Lines     *uint64  `json:"lines,omitempty"`
+	Mode      string   `json:"mode,omitempty"`
+	LabelKeys []string `json:"label_keys,omitempty"`
 }
 
 // Response is one framed IPC reply (exported for streaming callers).
@@ -272,6 +273,32 @@ func (c *Client) FollowLogs(name string, lines int, follow bool) (net.Conn, erro
 	}
 	if name != "" {
 		req.Name = name
+	}
+	if err := writeFrame(conn, req); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	_ = conn.SetDeadline(time.Time{})
+	return conn, nil
+}
+
+// Watch opens a streaming connection that delivers coalesced `list`
+// snapshots. Caller must Close the conn.
+//
+// labelKeys, when non-empty, keep only services that possess every listed
+// key (presence; any value). An empty/nil slice watches all services.
+//
+// Use [Client.ReadFrame] to consume the stream: it skips heartbeats and
+// enforces a per-frame idle deadline. Each non-heartbeat frame is a `list`
+// response (`Response.Services`).
+func (c *Client) Watch(labelKeys []string) (net.Conn, error) {
+	conn, err := c.dial()
+	if err != nil {
+		return nil, err
+	}
+	req := request{Type: "watch"}
+	if len(labelKeys) > 0 {
+		req.LabelKeys = labelKeys
 	}
 	if err := writeFrame(conn, req); err != nil {
 		_ = conn.Close()

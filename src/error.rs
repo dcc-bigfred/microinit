@@ -47,6 +47,10 @@ pub enum Error {
     #[error("IPC error: {0}")]
     Ipc(String),
 
+    /// Bounded IPC resource exhausted (watch followers, etc.).
+    #[error("{0}")]
+    Busy(String),
+
     #[error("nix error: {0}")]
     Nix(#[from] nix::Error),
 
@@ -77,6 +81,7 @@ impl Error {
             Error::UnknownService(_) => Some("not_found"),
             Error::Disabled(_) => Some("disabled"),
             Error::Cycle(_) => Some("cycle"),
+            Error::Busy(_) => Some("busy"),
             _ => None,
         }
     }

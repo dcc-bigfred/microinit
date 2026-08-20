@@ -47,5 +47,6 @@ pub mod syncutil;
 #[cfg(feature = "init")]
 pub mod unmount;
 pub mod version;
+pub mod watch;
 
 pub use error::{Error, Result};
