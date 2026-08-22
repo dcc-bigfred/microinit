@@ -94,11 +94,22 @@ fn read_running_identity_self() {
 }
 
 #[cfg(not(target_os = "android"))]
+fn read_capeff() -> Option<String> {
+    std::fs::read_to_string("/proc/self/status")
+        .ok()?
+        .lines()
+        .find(|l| l.starts_with("CapEff:"))
+        .map(str::to_string)
+}
+
+#[cfg(not(target_os = "android"))]
 #[test]
 fn run_shell_as_numeric_self() {
-    // Dropping to our own uid/gid is a no-op privilege-wise but exercises the path.
+    // Matching the supervisor uid/gid with an empty capability list is a no-op:
+    // CapEff must stay identical to the parent (not cleared to zeros).
     let uid = nix::unistd::getuid().as_raw();
     let gid = nix::unistd::getgid().as_raw();
+    let parent_capeff = read_capeff().expect("parent CapEff");
     let mut c = cfg();
     c.security_context = Some(microinit::config::SecurityContext {
         run_as_user: Some(uid.to_string()),
@@ -109,12 +120,30 @@ fn run_shell_as_numeric_self() {
     c.resolved_security =
         microinit::security::resolve(c.security_context.as_ref().unwrap()).unwrap();
 
-    match run_shell(
-        &format!(r#"test "$(id -u)" = {uid} && test "$(id -g)" = {gid}"#),
+    match spawn_shell(
+        &format!(
+            r#"test "$(id -u)" = {uid} && test "$(id -g)" = {gid} && grep '^CapEff:' /proc/self/status"#
+        ),
         &c,
-        &HashMap::new(),
     ) {
-        Ok(code) => assert_eq!(code, 0),
+        Ok(mut child) => {
+            use std::io::Read;
+            let mut out = String::new();
+            child
+                .stdout
+                .as_mut()
+                .unwrap()
+                .read_to_string(&mut out)
+                .unwrap();
+            let status = child.wait().unwrap();
+            assert!(status.success(), "id/CapEff check failed: {out}");
+            let child_capeff = out
+                .lines()
+                .find(|l| l.starts_with("CapEff:"))
+                .expect("child CapEff")
+                .trim();
+            assert_eq!(child_capeff, parent_capeff.trim());
+        }
         Err(e) => {
             let msg = e.to_string();
             // User namespaces with setgroups=deny (or missing CAP_SETPCAP) cannot

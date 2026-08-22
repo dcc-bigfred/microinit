@@ -167,6 +167,29 @@ impl ResolvedIdentity {
     pub fn drops_identity(&self) -> bool {
         self.uid.is_some() || self.gid.is_some()
     }
+
+    /// `true` when applying this identity would not change uid/gid and no
+    /// exclusive capability set was requested.
+    ///
+    /// `runAsUser: "root"` (or `"0"`) on a root supervisor matches this: the
+    /// process already has full privileges, so `apply_pre_exec` must not strip
+    /// capabilities / bounding set / `NO_NEW_PRIVS`. A non-empty `capabilities`
+    /// list is still applied even when uid/gid already match.
+    #[must_use]
+    pub fn already_current_without_caps(&self) -> bool {
+        if !self.caps.is_empty() {
+            return false;
+        }
+        let uid_ok = match self.uid {
+            None => true,
+            Some(u) => u == Uid::current().as_raw(),
+        };
+        let gid_ok = match self.gid {
+            None => true,
+            Some(g) => g == Gid::current().as_raw(),
+        };
+        uid_ok && gid_ok
+    }
 }
 
 /// Resolve `SecurityContext` into a concrete identity.
@@ -265,6 +288,9 @@ pub fn resolve(ctx: &SecurityContext) -> Result<Option<ResolvedIdentity>> {
 /// Order: keepcaps → bounding-set drop → initgroups (or setgroups([])) →
 /// setgid → setuid → capset + ambient → `PR_SET_NO_NEW_PRIVS`.
 ///
+/// Skipped when [`ResolvedIdentity::already_current_without_caps`] is true so
+/// `runAsUser: "root"` on a root supervisor does not strip capabilities.
+///
 /// When `runAsUser` was a **login name**, [`unistd::initgroups`] installs that
 /// user's supplementary groups from `/etc/group` (e.g. `bigfred` ∈ `dialout`).
 /// Numeric uid strings keep the fail-closed `setgroups([])` even if passwd
@@ -276,7 +302,7 @@ pub fn resolve(ctx: &SecurityContext) -> Result<Option<ResolvedIdentity>> {
 /// child between fork and exec). Success path avoids heap allocation after the
 /// first syscall; error paths may allocate for diagnostics.
 pub fn apply_pre_exec(ident: &ResolvedIdentity) -> Result<()> {
-    if ident.is_noop() {
+    if ident.is_noop() || ident.already_current_without_caps() {
         return Ok(());
     }
 
@@ -363,7 +389,14 @@ fn apply_groups(ident: &ResolvedIdentity) -> Result<()> {
 }
 
 /// Install [`apply_pre_exec`] on `cmd` via `CommandExt::pre_exec`.
+///
+/// Skipped when the identity already matches the current process and no
+/// exclusive capability set was requested (see
+/// [`ResolvedIdentity::already_current_without_caps`]).
 pub fn attach_pre_exec(cmd: &mut std::process::Command, ident: &ResolvedIdentity) {
+    if ident.is_noop() || ident.already_current_without_caps() {
+        return;
+    }
     use std::os::unix::process::CommandExt;
     let owned = ident.clone();
     // SAFETY: the closure only runs in the single-threaded child between fork
@@ -570,5 +603,43 @@ mod tests {
             }
             Ok(None) => panic!("expected identity or error"),
         }
+    }
+
+    fn ident(uid: Option<u32>, gid: Option<u32>, caps: Vec<u8>) -> ResolvedIdentity {
+        ResolvedIdentity {
+            uid,
+            gid,
+            caps,
+            home: None,
+            username: None,
+            named_user: false,
+        }
+    }
+
+    #[test]
+    fn already_current_without_caps_matches_self() {
+        let uid = Uid::current().as_raw();
+        let gid = Gid::current().as_raw();
+        assert!(ident(Some(uid), Some(gid), vec![]).already_current_without_caps());
+        assert!(ident(Some(uid), None, vec![]).already_current_without_caps());
+        assert!(ident(None, Some(gid), vec![]).already_current_without_caps());
+    }
+
+    #[test]
+    fn already_current_with_explicit_caps_is_not_skipped() {
+        // Exclusive cap set must still apply even when uid/gid already match
+        // (e.g. runAsUser: root + capabilities: [NET_RAW]).
+        let uid = Uid::current().as_raw();
+        let gid = Gid::current().as_raw();
+        const NET_RAW: u8 = 13;
+        assert!(!ident(Some(uid), Some(gid), vec![NET_RAW]).already_current_without_caps());
+        assert!(!ident(Some(0), Some(0), vec![NET_RAW]).already_current_without_caps());
+    }
+
+    #[test]
+    fn already_current_without_caps_rejects_other_uid() {
+        let uid = Uid::current().as_raw().wrapping_add(1);
+        let gid = Gid::current().as_raw();
+        assert!(!ident(Some(uid), Some(gid), vec![]).already_current_without_caps());
     }
 }

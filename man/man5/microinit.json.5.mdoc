@@ -215,6 +215,22 @@ Supplementary groups are cleared
 The capability bounding set is shrunk and
 .Dv PR_SET_NO_NEW_PRIVS
 is set.
+When
+.Cm runAsUser
+and
+.Cm runAsGroup
+already match the supervisor
+.Pq typically
+.Li root
+for PID 1
+and
+.Cm capabilities
+is empty, the drop is skipped so the service keeps full privileges.
+.Cm runAsUser
+.Li root
+on a root supervisor is a no-op; a non-empty
+.Cm capabilities
+list is still applied.
 .Cm describe
 prints the configured context and the live process identity from
 .Pa /proc .

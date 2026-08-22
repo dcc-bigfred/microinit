@@ -188,6 +188,8 @@ After the drop, microinit also:
 - sets `PR_SET_NO_NEW_PRIVS` so later `exec` cannot regain privileges via setuid binaries / file caps,
 - sets `HOME` / `USER` / `LOGNAME` from passwd when known (unless overridden in `env`).
 
+When `runAsUser` / `runAsGroup` already match the supervisor (typically `root` for PID 1) and `capabilities` is empty, the drop is **skipped**. The service keeps the parent's full privilege set, including Linux capabilities. `runAsUser: "root"` on a root supervisor is therefore a no-op — it does **not** strip `CAP_DAC_OVERRIDE` and friends. Listing `capabilities` still applies an exclusive set even as root.
+
 Inspect a running service with `microinit describe <name>` — it shows **Running as** (live uid/gid from `/proc`) and **Security** (the configured `securityContext`). Use `microinit describe -o json <name>` to dump the raw service object from its source file (stdout is pure JSON; the path is printed on stderr). Note: `-o json` is the **unmerged** source object; human `describe` shows the **merged** in-memory definition.
 
 ### Run a service as a non-root user
