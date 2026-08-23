@@ -159,3 +159,29 @@ fn run_shell_as_numeric_self() {
         }
     }
 }
+
+#[test]
+#[serial_test::serial]
+fn path_precedence_default_file_cfg_extra() {
+    use microinit::envfile;
+
+    envfile::install(HashMap::new());
+    let c = cfg();
+    let code = run_shell(r#"echo "$PATH" | grep -q '/usr/bin'"#, &c, &HashMap::new()).unwrap();
+    assert_eq!(code, 0, "default PATH should include /usr/bin");
+
+    envfile::install(HashMap::from([("PATH".into(), "/from-file".into())]));
+    let code = run_shell(r#"test "$PATH" = /from-file"#, &c, &HashMap::new()).unwrap();
+    assert_eq!(code, 0, "env file PATH should override default");
+
+    let mut c = cfg();
+    c.env.insert("PATH".into(), "/from-cfg".into());
+    let code = run_shell(r#"test "$PATH" = /from-cfg"#, &c, &HashMap::new()).unwrap();
+    assert_eq!(code, 0, "cfg.env PATH should override file");
+
+    let extra = HashMap::from([("PATH".into(), "/from-extra".into())]);
+    let code = run_shell(r#"test "$PATH" = /from-extra"#, &c, &extra).unwrap();
+    assert_eq!(code, 0, "env_extra PATH should override cfg.env");
+
+    envfile::install(HashMap::new());
+}

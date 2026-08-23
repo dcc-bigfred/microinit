@@ -106,6 +106,7 @@ fn make_sup(services: Vec<ServiceConfig>) -> (Arc<Supervisor>, std::path::PathBu
         console: "/dev/null".into(),
         socket_allow_users: Vec::new(),
         open_telemetry: Default::default(),
+        env_file: Vec::new(),
         services,
     };
     let hub = Arc::new(LogHub::new(50, None, None, None));

@@ -38,11 +38,13 @@ fn build_shell_command(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    // Predictable PATH unless the service (or caller) overrides it.
-    if !cfg.env.contains_key("PATH") && !env_extra.contains_key("PATH") {
-        c.env("PATH", DEFAULT_SERVICE_PATH);
-    }
+    let file_env = crate::envfile::snapshot();
 
+    // Precedence: DEFAULT_SERVICE_PATH < env file(s) < cfg.env < env_extra.
+    c.env("PATH", DEFAULT_SERVICE_PATH);
+    for (k, v) in &file_env {
+        c.env(k, v);
+    }
     for (k, v) in &cfg.env {
         c.env(k, v);
     }
@@ -54,15 +56,24 @@ fn build_shell_command(
     if let Some(ident) = ident {
         // Passwd-derived identity env unless the service overrides them.
         if let Some(ref home) = ident.home {
-            if !cfg.env.contains_key("HOME") && !env_extra.contains_key("HOME") {
+            if !file_env.contains_key("HOME")
+                && !cfg.env.contains_key("HOME")
+                && !env_extra.contains_key("HOME")
+            {
                 c.env("HOME", home);
             }
         }
         if let Some(ref user) = ident.username {
-            if !cfg.env.contains_key("USER") && !env_extra.contains_key("USER") {
+            if !file_env.contains_key("USER")
+                && !cfg.env.contains_key("USER")
+                && !env_extra.contains_key("USER")
+            {
                 c.env("USER", user);
             }
-            if !cfg.env.contains_key("LOGNAME") && !env_extra.contains_key("LOGNAME") {
+            if !file_env.contains_key("LOGNAME")
+                && !cfg.env.contains_key("LOGNAME")
+                && !env_extra.contains_key("LOGNAME")
+            {
                 c.env("LOGNAME", user);
             }
         }

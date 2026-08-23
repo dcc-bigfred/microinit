@@ -550,6 +550,10 @@ pub struct Config {
     pub socket_allow_users: Vec<String>,
     #[serde(default)]
     pub open_telemetry: OpenTelemetryConfig,
+    /// Dotenv files applied to every supervised process. Later entries win.
+    /// Default: `/etc/microinit/microinit.env` then `$DATA_DIR/etc/microinit.env`.
+    #[serde(default = "default_env_file")]
+    pub env_file: Vec<String>,
     #[serde(default)]
     pub services: Vec<ServiceConfig>,
 }
@@ -566,6 +570,10 @@ fn default_console() -> String {
     DEFAULT_CONSOLE.to_string()
 }
 
+fn default_env_file() -> Vec<String> {
+    crate::envfile::default_paths()
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -576,6 +584,7 @@ impl Default for Config {
             console: default_console(),
             socket_allow_users: Vec::new(),
             open_telemetry: OpenTelemetryConfig::default(),
+            env_file: default_env_file(),
             services: Vec::new(),
         }
     }
@@ -799,6 +808,7 @@ pub fn load_config(path: &Path) -> Result<Config> {
     let data = fs::read_to_string(path).map_err(|e| Error::io_at(path, e))?;
     let mut cfg: Config = serde_json::from_str(&data)?;
     cfg.validate()?;
+    crate::envfile::load_into_cache(&cfg.env_file);
     #[cfg(not(target_os = "android"))]
     cfg.prepare_security()?;
     Ok(cfg)
@@ -917,6 +927,7 @@ pub fn load_or_create_with_dropins(
     let ov = load_override(override_path)?;
     apply_enabled_override(&mut cfg, &ov);
     cfg.validate()?;
+    crate::envfile::load_into_cache(&cfg.env_file);
     #[cfg(not(target_os = "android"))]
     cfg.prepare_security()?;
     Ok(cfg)
@@ -937,6 +948,7 @@ pub fn example_config() -> Config {
         console: DEFAULT_CONSOLE.to_string(),
         socket_allow_users: Vec::new(),
         open_telemetry: OpenTelemetryConfig::default(),
+        env_file: default_env_file(),
         services: vec![
             ServiceConfig {
                 name: "network".into(),

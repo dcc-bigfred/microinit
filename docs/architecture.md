@@ -42,13 +42,18 @@ Typical files:
 - `$DATA_DIR/etc/microinit.json` — main service list  
 - `$DATA_DIR/etc/microinit.services.enabled-override.json` — which services are enabled/disabled (after `enable` / `disable`)  
 - `$DATA_DIR/etc/microinit.d/services/**/*.json` — **drop-ins** (extra or overriding services)
+- `/etc/microinit/microinit.env`, `$DATA_DIR/etc/microinit.env` — dotenv applied to **every** service (`envFile`)
 
 ### How the final config is assembled
 
 1. Load `microinit.json`  
 2. Merge all drop-ins (lexicographic path order; **later file wins** for the same service name)  
 3. Apply the enable/disable override  
-4. Validate (including `dependsOn` edges)
+4. Validate (including `dependsOn` edges)  
+5. Load the `envFile` list into the process-wide env snapshot used at spawn
+
+Step 5 is how a system-wide `PATH` reaches every service without repeating it
+in each JSON entry. See [`envFile`](configuration.md#environment-for-every-service-envfile).
 
 **Why drop-ins?** So the system image can ship a base service list while a specific device or product adds its own JSON without editing the main file.
 

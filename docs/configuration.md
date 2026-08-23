@@ -14,6 +14,8 @@ By default durable state lives under **`/data`**. Override with **`DATA_DIR`** (
 | `$DATA_DIR/etc/microinit.services.enabled-override.json` | Written by `microinit enable` / `disable` |
 | `$DATA_DIR/etc/microinit.d/services/**/*.json` | **Drop-ins** — extra or overriding services |
 | `$DATA_DIR/etc/microinit.json.example` | Example (created if missing) |
+| `/etc/microinit/microinit.env` | Env applied to **every** service (image layer) |
+| `$DATA_DIR/etc/microinit.env` | Same, operator layer — wins over the image one |
 
 A system image may **seed** `/data/etc/microinit.json` from `/etc/microinit/microinit.json` during early-boot — only if `/data` does not already have its own copy.
 
@@ -90,8 +92,50 @@ You do not have to put every service in one big `microinit.json`. Extra JSON und
 | `earlyBoot.captureLogs` | If `true`, write the RAM-buffered early-boot script output to `earlyBoot.logsPath` after the script exits. Does **not** skip early-boot. Default `false`. The file is `fsync`ed. If early-boot fails before this JSON is loaded, microinit still tries `--early-boot-logs-path`, then an existing live config, then the image JSON next to `early-boot.sh`. |
 | `earlyBoot.logsPath` | Absolute path for that file (default `/var/log/early-boot.log`). Opened only after early-boot returns, so a script that remounts `$DATA_DIR` (NVMe migration) still writes to the final mount. Must sit on a filesystem the script left writable — the root is typically remounted read-only. |
 | `openTelemetry` | Optional metrics (see README); also `$DATA_DIR/etc/otel.env` |
+| `envFile` | Dotenv files applied to every service (see below) |
 
 Most operators only edit **`services`**.
+
+---
+
+## Environment for every service (`envFile`)
+
+Some variables belong to the whole system rather than one service — `PATH` is
+the usual case. List dotenv files in **`envFile`**; each is applied to every
+supervised process.
+
+```json
+{
+  "envFile": ["/etc/microinit/microinit.env", "/data/etc/microinit.env"]
+}
+```
+
+That list is also the **default**, so an image can ship `/etc/microinit/microinit.env`
+and an operator can override single keys in `/data/etc/microinit.env` without
+touching the image. Set `"envFile": []` to disable the mechanism.
+
+File format is plain `KEY=value`, one per line; `#` starts a comment and
+surrounding quotes are stripped. Unlike `otel.env`, **key case is preserved**
+(`PATH` stays `PATH`, not `path`).
+
+```sh
+# /etc/microinit/microinit.env
+PATH=/data/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+```
+
+Precedence, lowest to highest:
+
+1. microinit's built-in default `PATH`
+2. `envFile` entries, in list order (**later file wins**)
+3. the service's own `env`
+4. per-call extras (for example the variables passed to a stop script)
+
+`HOME`, `USER` and `LOGNAME` derived from `securityContext` are only set when
+none of the layers above already define them.
+
+Files are read when the config is loaded, so a change needs a reload of
+`microinit.json` (touch it) or a restart — editing only the `.env` file does
+not trigger inotify on the config.
 
 ---
 

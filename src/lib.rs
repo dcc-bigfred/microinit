@@ -22,6 +22,7 @@ pub mod constants;
 pub mod datadir;
 #[cfg(feature = "init")]
 pub mod early_boot;
+pub mod envfile;
 pub mod error;
 pub mod graph;
 pub mod init;
