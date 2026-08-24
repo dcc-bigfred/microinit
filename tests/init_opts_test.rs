@@ -26,6 +26,7 @@ fn supervise_opts_disable_machine_shutdown() {
     );
     assert!(opts.skip_early_boot);
     assert!(!opts.require_early_boot);
+    assert!(opts.early_boot_logs_path.is_none());
     assert!(!opts.spawn_getty);
     assert!(!opts.attach_ttys);
     assert_eq!(opts.socket, "/tmp/test.sock");

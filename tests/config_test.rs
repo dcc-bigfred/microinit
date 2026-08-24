@@ -572,3 +572,102 @@ fn security_context_rejects_empty_user() {
     let err = cfg.validate().unwrap_err().to_string();
     assert!(err.contains("runAsUser"), "{err}");
 }
+
+#[test]
+fn early_boot_defaults_when_section_missing() {
+    let cfg: Config = serde_json::from_str(r#"{"version":1,"services":[]}"#).unwrap();
+    assert!(!cfg.early_boot.capture_logs);
+    assert_eq!(cfg.early_boot.logs_path, DEFAULT_EARLY_BOOT_LOGS_PATH);
+    cfg.validate().unwrap();
+}
+
+#[test]
+fn early_boot_round_trip_camel_case() {
+    let raw = r#"{
+      "earlyBoot": {
+        "captureLogs": true,
+        "logsPath": "/data/early-boot.log"
+      },
+      "services": []
+    }"#;
+    let cfg: Config = serde_json::from_str(raw).unwrap();
+    cfg.validate().unwrap();
+    assert!(cfg.early_boot.capture_logs);
+    assert_eq!(cfg.early_boot.logs_path, "/data/early-boot.log");
+    let dumped = serde_json::to_value(&cfg).unwrap();
+    assert_eq!(dumped["earlyBoot"]["captureLogs"], true);
+    assert_eq!(dumped["earlyBoot"]["logsPath"], "/data/early-boot.log");
+}
+
+#[test]
+fn early_boot_validate_rejects_relative_logs_path() {
+    let mut cfg = Config::default();
+    cfg.early_boot.capture_logs = true;
+    cfg.early_boot.logs_path = "early-boot.log".into();
+    let err = cfg.validate().unwrap_err().to_string();
+    assert!(err.contains("earlyBoot.logsPath"), "{err}");
+}
+
+#[test]
+fn early_boot_validate_rejects_empty_logs_path() {
+    let mut cfg = Config::default();
+    cfg.early_boot.capture_logs = true;
+    cfg.early_boot.logs_path = "  ".into();
+    let err = cfg.validate().unwrap_err().to_string();
+    assert!(err.contains("earlyBoot.logsPath"), "{err}");
+}
+
+#[test]
+fn early_boot_relative_path_ok_when_capture_disabled() {
+    let mut cfg = Config::default();
+    cfg.early_boot.logs_path = "early-boot.log".into();
+    cfg.validate().unwrap();
+}
+
+#[test]
+fn peek_early_boot_capture_absent_missing_file() {
+    let path = PathBuf::from("/tmp/microinit-does-not-exist-early-boot-peek.json");
+    assert_eq!(peek_early_boot_capture(&path), EarlyBootCapturePeek::Absent);
+}
+
+#[test]
+fn peek_early_boot_capture_disabled_and_enabled() {
+    let dir = std::env::temp_dir().join(format!(
+        "microinit-eb-peek-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&dir).unwrap();
+    let disabled = dir.join("disabled.json");
+    fs::write(&disabled, r#"{"version":1,"services":[]}"#).unwrap();
+    assert_eq!(
+        peek_early_boot_capture(&disabled),
+        EarlyBootCapturePeek::Disabled
+    );
+
+    let enabled = dir.join("enabled.json");
+    fs::write(
+        &enabled,
+        r#"{"earlyBoot":{"captureLogs":true,"logsPath":"/data/early-boot.log"},"services":[]}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        peek_early_boot_capture(&enabled),
+        EarlyBootCapturePeek::Enabled(PathBuf::from("/data/early-boot.log"))
+    );
+
+    let empty_path = dir.join("empty-path.json");
+    fs::write(
+        &empty_path,
+        r#"{"earlyBoot":{"captureLogs":true,"logsPath":"  "},"services":[]}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        peek_early_boot_capture(&empty_path),
+        EarlyBootCapturePeek::Disabled
+    );
+    let _ = fs::remove_dir_all(dir);
+}

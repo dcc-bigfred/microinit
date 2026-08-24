@@ -2,6 +2,7 @@
 name = "microinit"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.87"
 description = "PID 1 init system and service supervisor for BigFred OS"
 license = "MIT"
 authors = ["BigFred"]

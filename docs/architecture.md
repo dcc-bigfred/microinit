@@ -116,6 +116,8 @@ Mount policy therefore lives in a script / distro overlay, not hard-coded in Rus
 
 **Configuration is always loaded (or re-loaded) from disk only after early-boot returns**, so seeding of `$DATA_DIR/etc/microinit.json` and drop-ins by the script is visible to the supervisor. microinit does not create the config file before the script runs (that would race with mounting `/data`).
 
+Script stdout/stderr are teed live as raw bytes (the child sees a pipe, so `isatty` is false) and captured into a bounded RAM buffer. The buffer is flushed to `earlyBoot.logsPath` after the script exits when `earlyBoot.captureLogs` is true. If the script fails before JSON can be loaded, the buffer is still written when `--early-boot-logs-path` is set or an existing live/image config enables capture.
+
 ---
 
 ## Late unmount (shutdown)

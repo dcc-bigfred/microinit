@@ -15,6 +15,7 @@
 .Op Fl -no-early-boot
 .Op Fl -allow-no-early-boot
 .Op Fl -log-to-files
+.Op Fl -early-boot-logs-path Ns = Ns Ar path
 .Nm
 .Op Fl -socket Ns = Ns Ar path
 .Cm supervise
@@ -144,6 +145,17 @@ is off by default
 .Fl -log-to-files
 or
 .Cm logs.logToFiles true .
+.Pp
+.Fl -early-boot-logs-path
+is a fallback used only when early-boot fails before
+.Xr microinit.json 5
+can be loaded.
+PID 1 otherwise peeks an existing live or image JSON for
+.Cm earlyBoot.logsPath
+when
+.Cm captureLogs
+is true.
+A write failure is logged and does not change the fatal early-boot error.
 .Pp
 During boot, operational messages are written both to the console/stderr and to
 .Fl -init-logs-tty .

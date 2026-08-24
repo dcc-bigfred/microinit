@@ -17,6 +17,7 @@ pub const DEFAULT_INIT_LOGS_TTY: &str = "/dev/tty3";
 pub const DEFAULT_LOG_LINES: usize = 300;
 pub const DEFAULT_EARLY_BOOT: &str = "/etc/microinit/early-boot.sh";
 pub const DEFAULT_UNMOUNT: &str = "/etc/microinit/unmount.sh";
+pub const DEFAULT_EARLY_BOOT_LOGS_PATH: &str = "/var/log/early-boot.log";
 
 /// Hub-default config path (`/data/etc/...` when data root is unset).
 /// Prefer [`default_config_path`] which honors `DATA_DIR`.
@@ -118,6 +119,78 @@ impl LogsConfig {
         }
         self.dir.as_ref().map(std::path::PathBuf::from)
     }
+}
+
+/// Early-boot phase options. Applied at boot only (never hot-reloaded):
+/// the script has already run by the time this file is read.
+///
+/// Script stdout/stderr are always buffered in RAM (bounded). [`Self::capture_logs`]
+/// only gates the truncate-write to [`Self::logs_path`] after the script exits,
+/// so a distro overlay that remounts `$DATA_DIR` (for example NVMe migration)
+/// still lands the file on the final mount.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct EarlyBootConfig {
+    /// Persist the buffered early-boot script output to [`Self::logs_path`].
+    /// Output is always buffered in RAM; this only gates the disk write.
+    #[serde(default)]
+    pub capture_logs: bool,
+    #[serde(default = "default_early_boot_logs_path")]
+    pub logs_path: String,
+}
+
+fn default_early_boot_logs_path() -> String {
+    DEFAULT_EARLY_BOOT_LOGS_PATH.to_string()
+}
+
+impl Default for EarlyBootConfig {
+    fn default() -> Self {
+        Self {
+            capture_logs: false,
+            logs_path: default_early_boot_logs_path(),
+        }
+    }
+}
+
+/// Result of reading `earlyBoot` from an existing JSON file without creating
+/// or validating the rest of the config. Used when early-boot failed and we
+/// must not seed a default `microinit.json`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EarlyBootCapturePeek {
+    /// Path does not exist, is unreadable, or is not JSON.
+    Absent,
+    /// File exists and `captureLogs` is false (or `logsPath` is empty).
+    Disabled,
+    /// `captureLogs` is true; persist to this path.
+    Enabled(PathBuf),
+}
+
+/// Read only the `earlyBoot` object from `config_path`. Never creates files.
+#[must_use]
+pub fn peek_early_boot_capture(config_path: &Path) -> EarlyBootCapturePeek {
+    if !config_path.is_file() {
+        return EarlyBootCapturePeek::Absent;
+    }
+    let Ok(data) = fs::read_to_string(config_path) else {
+        return EarlyBootCapturePeek::Absent;
+    };
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Peek {
+        #[serde(default)]
+        early_boot: EarlyBootConfig,
+    }
+    let Ok(peek) = serde_json::from_str::<Peek>(&data) else {
+        return EarlyBootCapturePeek::Absent;
+    };
+    if !peek.early_boot.capture_logs {
+        return EarlyBootCapturePeek::Disabled;
+    }
+    let p = peek.early_boot.logs_path.trim();
+    if p.is_empty() {
+        return EarlyBootCapturePeek::Disabled;
+    }
+    EarlyBootCapturePeek::Enabled(PathBuf::from(p))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -465,6 +538,8 @@ pub struct Config {
     pub version: u32,
     #[serde(default)]
     pub logs: LogsConfig,
+    #[serde(default)]
+    pub early_boot: EarlyBootConfig,
     #[serde(default = "default_socket")]
     pub socket: String,
     #[serde(default = "default_console")]
@@ -496,6 +571,7 @@ impl Default for Config {
         Self {
             version: 1,
             logs: LogsConfig::default(),
+            early_boot: EarlyBootConfig::default(),
             socket: default_socket(),
             console: default_console(),
             socket_allow_users: Vec::new(),
@@ -507,6 +583,14 @@ impl Default for Config {
 
 impl Config {
     pub fn validate(&self) -> Result<()> {
+        if self.early_boot.capture_logs {
+            let p = self.early_boot.logs_path.trim();
+            if p.is_empty() || !Path::new(p).is_absolute() {
+                return Err(Error::Config(
+                    "earlyBoot.logsPath must be an absolute path".into(),
+                ));
+            }
+        }
         let mut names = std::collections::HashSet::new();
         for svc in &self.services {
             if svc.name.is_empty() {
@@ -848,6 +932,7 @@ pub fn example_config() -> Config {
             dir: Some(default_logs_dir().display().to_string()),
             log_to_files: false,
         },
+        early_boot: EarlyBootConfig::default(),
         socket: DEFAULT_SOCKET.to_string(),
         console: DEFAULT_CONSOLE.to_string(),
         socket_allow_users: Vec::new(),

@@ -64,6 +64,9 @@ enum Commands {
         /// Append service/init logs to files under logs.dir (overrides config logToFiles)
         #[arg(long)]
         log_to_files: bool,
+        /// Fallback path for early-boot capture if the script fails before config load
+        #[arg(long)]
+        early_boot_logs_path: Option<PathBuf>,
     },
     /// Run as container / host supervisor (no early-boot, no getty, no TTYs)
     Supervise {
@@ -158,6 +161,7 @@ fn default_init_opts(socket: String) -> init::InitOpts {
         skip_early_boot: false,
         require_early_boot: true,
         log_to_files: false,
+        early_boot_logs_path: None,
         spawn_getty: true,
         attach_ttys: true,
         socket,
@@ -225,6 +229,7 @@ fn main() -> ExitCode {
             no_early_boot: false,
             allow_no_early_boot: false,
             log_to_files: false,
+            early_boot_logs_path: None,
         },
         None => {
             eprintln!("microinit: missing subcommand (try --help)");
@@ -242,6 +247,7 @@ fn main() -> ExitCode {
             no_early_boot,
             allow_no_early_boot,
             log_to_files,
+            early_boot_logs_path,
         } => init::run(init::InitOpts {
             logs_tty,
             init_logs_tty,
@@ -250,6 +256,7 @@ fn main() -> ExitCode {
             skip_early_boot: no_early_boot,
             require_early_boot: !allow_no_early_boot && !no_early_boot,
             log_to_files,
+            early_boot_logs_path,
             spawn_getty: true,
             attach_ttys: true,
             socket,

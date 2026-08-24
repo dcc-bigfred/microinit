@@ -7,6 +7,10 @@
     "dir": "/data/logs",
     "logToFiles": false
   },
+  "earlyBoot": {
+    "captureLogs": false,
+    "logsPath": "/var/log/early-boot.log"
+  },
   "socket": "/data/run/microinit.sock",
   "console": "/dev/tty1",
   "services": [
