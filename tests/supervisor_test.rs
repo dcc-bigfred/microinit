@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use microinit::config::{Config, LogsConfig, RestartPolicy, ServiceConfig};
+use microinit::config::{Config, EarlyBootConfig, LogsConfig, RestartPolicy, ServiceConfig};
 use microinit::console::Console;
 use microinit::error::Error;
 use microinit::logs::LogHub;
@@ -101,6 +101,7 @@ fn make_sup(services: Vec<ServiceConfig>) -> (Arc<Supervisor>, std::path::PathBu
             dir: None,
             log_to_files: false,
         },
+        early_boot: EarlyBootConfig::default(),
         socket: dir.join("sock").to_string_lossy().into(),
         console: "/dev/null".into(),
         socket_allow_users: Vec::new(),

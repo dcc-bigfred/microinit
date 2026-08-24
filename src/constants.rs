@@ -46,3 +46,10 @@ pub const TERMINATE_POLL: Duration = Duration::from_millis(100);
 pub const EVENT_RING_CAP: usize = 16;
 /// How many recent lifecycle events `describe` returns (= ring capacity).
 pub const EVENT_RETURN: usize = EVENT_RING_CAP;
+/// Max early-boot script lines retained for `earlyBoot.logsPath` (bounded RAM on PID 1).
+pub const MAX_EARLY_BOOT_CAPTURE_LINES: usize = 2000;
+/// Total captured-text budget (UTF-8 bytes of retained lines) on PID 1.
+pub const MAX_EARLY_BOOT_CAPTURE_BYTES: usize = 256 * 1024;
+/// Max single captured line length before truncation. Enforced while reading so a
+/// line without a newline cannot grow without bound.
+pub const MAX_EARLY_BOOT_LINE_BYTES: usize = 4096;

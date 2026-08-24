@@ -33,6 +33,9 @@ pub struct InitOpts {
     pub require_early_boot: bool,
     /// Force `logs.logToFiles` on (CLI override; config may also enable it).
     pub log_to_files: bool,
+    /// Fallback path for early-boot capture when the config cannot be loaded
+    /// (script failed before mounting the data root). Best-effort.
+    pub early_boot_logs_path: Option<PathBuf>,
     /// Spawn getty on the console when PID 1 (full init only).
     pub spawn_getty: bool,
     /// Attach service/init TTYs to LogHub (false for container supervise).
@@ -54,6 +57,7 @@ impl Default for InitOpts {
             skip_early_boot: false,
             require_early_boot: true,
             log_to_files: false,
+            early_boot_logs_path: None,
             spawn_getty: true,
             attach_ttys: true,
             socket: crate::config::default_socket_path().display().to_string(),
@@ -78,6 +82,7 @@ pub fn supervise_opts(
         skip_early_boot: true,
         require_early_boot: false,
         log_to_files,
+        early_boot_logs_path: None,
         spawn_getty: false,
         attach_ttys: false,
         socket,
@@ -101,6 +106,9 @@ pub fn run(opts: InitOpts) -> Result<()> {
     }
 
     #[cfg(feature = "init")]
+    let mut early_boot_out: Option<crate::early_boot::EarlyBootOutput> = None;
+
+    #[cfg(feature = "init")]
     {
         if opts.skip_early_boot {
             boot_note(
@@ -108,23 +116,27 @@ pub fn run(opts: InitOpts) -> Result<()> {
                 "skipping early-boot (--no-early-boot / supervise)",
             );
         } else {
-            match crate::early_boot::run(
+            let (out, result) = crate::early_boot::run(
                 &opts.paths,
                 &opts.logs_tty,
                 &opts.init_logs_tty,
                 &opts.console,
-            ) {
+            );
+            match result {
                 Ok(()) => {
                     boot_note(
                         init_logs_preview,
                         "early-boot finished; loading configuration from disk",
                     );
+                    early_boot_out = Some(out);
                 }
                 Err(e) => {
                     boot_note(init_logs_preview, &format!("early-boot failed: {e}"));
                     if opts.require_early_boot {
+                        persist_early_boot_logs(init_logs_preview, &opts, &out);
                         return Err(e);
                     }
+                    early_boot_out = Some(out);
                     boot_note(
                         init_logs_preview,
                         "continuing without early-boot; loading configuration from disk",
@@ -137,6 +149,7 @@ pub fn run(opts: InitOpts) -> Result<()> {
     {
         let _ = opts.skip_early_boot;
         let _ = opts.require_early_boot;
+        let _ = &opts.early_boot_logs_path;
         boot_note(
             init_logs_preview,
             "early-boot disabled (supervise-only / no-init build)",
@@ -145,7 +158,16 @@ pub fn run(opts: InitOpts) -> Result<()> {
 
     // Always (re)load JSON after early-boot: the script mounts `$DATA_DIR` and
     // may seed/update `microinit.json`, drop-ins, and the enabled-override.
-    let mut cfg = load_config_after_early_boot(&opts)?;
+    let mut cfg = match load_config_after_early_boot(&opts) {
+        Ok(c) => c,
+        Err(e) => {
+            #[cfg(feature = "init")]
+            if let Some(ref out) = early_boot_out {
+                persist_early_boot_logs(init_logs_preview, &opts, out);
+            }
+            return Err(e);
+        }
+    };
 
     if let Err(e) = crate::otelenv::load_default() {
         boot_note(
@@ -179,6 +201,8 @@ pub fn run(opts: InitOpts) -> Result<()> {
     let console = Arc::new(Console::open_with_hub(&opts.console, Some(hub.clone())));
 
     hub.emit_init(LogLevel::Info, "configuration loaded");
+    #[cfg(feature = "init")]
+    flush_early_boot_logs(&hub, &cfg, early_boot_out.as_ref(), opts.skip_early_boot);
     if opts.attach_ttys {
         hub.emit_init(
             LogLevel::Info,
@@ -393,6 +417,110 @@ fn load_config_after_early_boot(opts: &InitOpts) -> Result<crate::config::Config
     )?;
     cfg.socket = opts.socket.clone();
     Ok(cfg)
+}
+
+/// Persist the RAM-buffered early-boot capture after mounts have settled.
+/// Never fails the boot: a missing/RO `logsPath` is a warning.
+#[cfg(feature = "init")]
+fn flush_early_boot_logs(
+    hub: &LogHub,
+    cfg: &crate::config::Config,
+    captured: Option<&crate::early_boot::EarlyBootOutput>,
+    skipped: bool,
+) {
+    if !cfg.early_boot.capture_logs {
+        hub.emit_init(LogLevel::Info, "early-boot log capture disabled");
+        return;
+    }
+    if skipped {
+        hub.emit_init(
+            LogLevel::Info,
+            "early-boot log capture not applicable (supervise / --no-early-boot)",
+        );
+        return;
+    }
+    let Some(out) = captured else {
+        hub.emit_init(
+            LogLevel::Warn,
+            "early-boot log capture enabled but nothing to write",
+        );
+        return;
+    };
+    if !out.captured {
+        hub.emit_init(
+            LogLevel::Warn,
+            format!(
+                "early-boot log capture enabled but stdio was not captured; skipping {}",
+                cfg.early_boot.logs_path
+            ),
+        );
+        return;
+    }
+    let path = Path::new(&cfg.early_boot.logs_path);
+    match crate::early_boot::write_captured(path, out) {
+        Ok(n) => hub.emit_init(
+            LogLevel::Info,
+            format!("early-boot logs written to {} ({n} lines)", path.display()),
+        ),
+        Err(e) => hub.emit_init(
+            LogLevel::Warn,
+            format!("early-boot logs not written to {}: {e}", path.display()),
+        ),
+    }
+}
+
+/// Best-effort persist when we will not reach the normal post-config flush
+/// (required early-boot failed, or config load failed). Never creates a
+/// default `microinit.json`.
+#[cfg(feature = "init")]
+fn persist_early_boot_logs(
+    init_logs_preview: Option<&str>,
+    opts: &InitOpts,
+    out: &crate::early_boot::EarlyBootOutput,
+) {
+    if !out.captured {
+        boot_note(
+            init_logs_preview,
+            "early-boot log capture: stdio was not captured; nothing to write",
+        );
+        return;
+    }
+    let Some(path) = fatal_early_boot_logs_path(opts) else {
+        boot_note(
+            init_logs_preview,
+            "early-boot logs not written (no --early-boot-logs-path and captureLogs not enabled in an existing config)",
+        );
+        return;
+    };
+    match crate::early_boot::write_captured(&path, out) {
+        Ok(n) => boot_note(
+            init_logs_preview,
+            &format!("early-boot logs written to {} ({n} lines)", path.display()),
+        ),
+        Err(e) => boot_note(
+            init_logs_preview,
+            &format!("early-boot logs not written to {}: {e}", path.display()),
+        ),
+    }
+}
+
+/// CLI path wins; otherwise the live config if it already exists; otherwise
+/// the image overlay next to the base early-boot script. Does not seed JSON.
+#[cfg(feature = "init")]
+fn fatal_early_boot_logs_path(opts: &InitOpts) -> Option<PathBuf> {
+    if let Some(p) = &opts.early_boot_logs_path {
+        return Some(p.clone());
+    }
+    match config::peek_early_boot_capture(&opts.paths.config) {
+        config::EarlyBootCapturePeek::Enabled(p) => return Some(p),
+        config::EarlyBootCapturePeek::Disabled => return None,
+        config::EarlyBootCapturePeek::Absent => {}
+    }
+    let image = opts.paths.early_boot.parent()?.join("microinit.json");
+    match config::peek_early_boot_capture(&image) {
+        config::EarlyBootCapturePeek::Enabled(p) => Some(p),
+        _ => None,
+    }
 }
 
 fn handle_ipc(

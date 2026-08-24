@@ -71,6 +71,10 @@ You do not have to put every service in one big `microinit.json`. Extra JSON und
     "logToFiles": false,
     "dir": "/data/logs"
   },
+  "earlyBoot": {
+    "captureLogs": false,
+    "logsPath": "/var/log/early-boot.log"
+  },
   "services": []
 }
 ```
@@ -83,6 +87,8 @@ You do not have to put every service in one big `microinit.json`. Extra JSON und
 | `logs.tty` | Service logs (init mode) |
 | `logs.initTty` | microinit’s own messages |
 | `logs.logToFiles` | If `true`, also files under `$DATA_DIR/logs/` |
+| `earlyBoot.captureLogs` | If `true`, write the RAM-buffered early-boot script output to `earlyBoot.logsPath` after the script exits. Does **not** skip early-boot. Default `false`. The file is `fsync`ed. If early-boot fails before this JSON is loaded, microinit still tries `--early-boot-logs-path`, then an existing live config, then the image JSON next to `early-boot.sh`. |
+| `earlyBoot.logsPath` | Absolute path for that file (default `/var/log/early-boot.log`). Opened only after early-boot returns, so a script that remounts `$DATA_DIR` (NVMe migration) still writes to the final mount. Must sit on a filesystem the script left writable — the root is typically remounted read-only. |
 | `openTelemetry` | Optional metrics (see README); also `$DATA_DIR/etc/otel.env` |
 
 Most operators only edit **`services`**.
@@ -211,6 +217,7 @@ Requires **microinit restart** (on PID 1 hosts: reboot):
   still be able to open a `0660` socket for that group (put the intended
   socket-group owner first).
 - `logs.*` (TTYs, `logToFiles`, buffer size)
+- `earlyBoot.*` (capture is applied once at boot, after the script has already run)
 - `console`
 
 ---

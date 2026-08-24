@@ -285,11 +285,12 @@ microinit start --force redis   # debugging only
 ## Boot sequence (init mode as PID 1)
 
 1. Kernel starts `/sbin/init` (microinit).  
-2. **Early-boot** (mount `/data`, seed config, …).  
+2. **Early-boot** (mount `/data`, seed config, …). stdout/stderr are teed live to the console (raw bytes; the script sees a pipe, not a TTY) and buffered in RAM (bounded).  
 3. Config loaded from disk.  
-4. Enabled services start in topological order (`dependsOn` hard edges; among ready services lower `orderPriority` first, then name). `background: true` services are started first (in that order), then foreground sequentially. Details: [Service ordering](configuration.md#service-ordering).  
-5. Console `[ OK ]` / `[ FAIL ]`; getty.  
-6. IPC socket; JSON files watched for reload.  
+4. If `earlyBoot.captureLogs` is true, the buffer is truncate-written and `fsync`ed to `earlyBoot.logsPath` (best-effort; a write failure is a warning, not a boot abort). If early-boot itself fails, the same write is attempted via `--early-boot-logs-path` or an existing JSON with `captureLogs: true` before aborting. 
+5. Enabled services start in topological order (`dependsOn` hard edges; among ready services lower `orderPriority` first, then name). `background: true` services are started first (in that order), then foreground sequentially. Details: [Service ordering](configuration.md#service-ordering).  
+6. Console `[ OK ]` / `[ FAIL ]`; getty.  
+7. IPC socket; JSON files watched for reload.  
 
 On shutdown in **`init`** mode (`shutdown -r`, IPC `shutdown`, SIGTERM, …): services stop in **reverse** of that start order, then the **unmount** script runs (unbind mounts / umount `/data`), then reboot or power-off.
 
@@ -303,6 +304,7 @@ In **`supervise`** mode there is no early-boot, getty, late unmount, or machine 
 | `/dev/tty3` | microinit messages |
 | `microinit logs …` | Same via socket |
 | `$DATA_DIR/logs/` | Files when `logs.logToFiles: true` |
+| `earlyBoot.logsPath` | Early-boot script stdout/stderr when `earlyBoot.captureLogs: true` (one file per boot, truncated) |
 
 ---
 

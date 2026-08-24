@@ -829,6 +829,13 @@ impl Supervisor {
                 "reload: logs.* change ignored (restart microinit required)",
             );
         }
+        if old.early_boot != new_cfg.early_boot {
+            self.hub.emit(
+                INIT_SERVICE,
+                LogLevel::Warn,
+                "reload: earlyBoot change ignored (restart microinit required)",
+            );
+        }
         if old.console != new_cfg.console {
             self.hub.emit(
                 INIT_SERVICE,

@@ -40,6 +40,39 @@ files when
 .Cm logs.logToFiles
 is true (default
 .Pa /data/logs )
+.It Cm earlyBoot.captureLogs
+If true, write the RAM-buffered early-boot script output to
+.Cm earlyBoot.logsPath
+after the script exits
+.Pq default false .
+Does
+.Em not
+skip early-boot; the script stdout/stderr are always teed live to the console
+as raw bytes and always buffered in RAM
+.Pq bounded by line count and total bytes .
+The on-disk write is followed by
+.Xr fsync 2 .
+If the script fails before this file is loaded, capture is still persisted
+when
+.Nm microinit Cm init Fl -early-boot-logs-path
+is set, or when an existing copy of this file
+.Pq or the image JSON next to
+.Pa early-boot.sh
+.Pc
+has
+.Cm captureLogs
+true.
+.It Cm earlyBoot.logsPath
+Absolute path for the captured early-boot log
+.Pq default
+.Pa /var/log/early-boot.log .
+Opened only after the script returns, so a distro overlay that remounts
+.Pa $DATA_DIR
+.Pq for example NVMe migration
+still writes to the final mount.
+The path must sit on a filesystem the early-boot script mounted and left
+writable; the root filesystem is typically remounted read-only before the
+script exits.
 .It Cm socket
 Unix control socket path
 .It Cm console
@@ -71,8 +104,10 @@ then applies
 Changes to these JSON files are picked up via Linux inotify
 .Pq hot-reload without restarting microinit ;
 .Cm socket
-and
+,
 .Cm logs.*
+, and
+.Cm earlyBoot.*
 changes require a process restart.
 .Ss Service fields
 .Bl -tag -width successExitCodes

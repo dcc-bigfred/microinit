@@ -60,6 +60,39 @@ Product images may install
 with a distro-specific script
 .Pq for example BigFred OS also fscks the Pa /data candidates, mounts Pa /data , seeds configs, bind-mounts Pa /etc/shadow
 or an override under the data root; otherwise the embedded portable script runs.
+.Pp
+stdout and stderr of the script are teed live to the
+.Nm microinit
+console
+.Pq kernel serial / HDMI on PID 1
+as raw bytes and captured into a bounded RAM buffer
+.Pq line count and total bytes .
+Invalid UTF-8 is replaced in the on-disk copy and does not stop capture.
+The child sees a pipe, not a TTY:
+.Fn isatty
+on stdout/stderr is false, which may change the output of tools that detect a
+terminal.
+The buffer is flushed to
+.Cm earlyBoot.logsPath
+only after the script exits
+.Pq and only when Cm earlyBoot.captureLogs is true ,
+so a script that migrates or remounts the log target is safe.
+The write is followed by
+.Xr fsync 2
+so a hard power cut shortly after boot still leaves the file.
+If early-boot fails before configuration is loaded, microinit still tries to
+write the buffer
+.Pq
+.Nm microinit Cm init Fl -early-boot-logs-path ,
+an existing live
+.Pa microinit.json
+with
+.Cm captureLogs
+true, or the image JSON next to this script
+.Pc ;
+if
+.Pa /data
+never mounted, that write fails and only the console copy remains.
 .Ss Environment
 .Bl -tag -width MICROINIT_INIT_LOGS_TTY
 .It Ev DATA_DIR
