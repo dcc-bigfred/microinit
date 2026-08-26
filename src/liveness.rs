@@ -177,6 +177,7 @@ mod tests {
             http_method: "GET".into(),
             interval: 1,
             timeout: 2,
+            failure_threshold: 1,
         }
     }
 

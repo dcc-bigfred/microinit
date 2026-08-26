@@ -161,7 +161,8 @@ If **`webapp`** is already **`running`** and **`database`** crashes:
 - database goes through restarting / running (if `restart: true`);
 - **webapp is not stopped automatically** — microinit does not cascade-stop dependents when a dependency dies.
 
-If webapp must die with the database, that belongs in the app or a `livenessProbe` on webapp.
+If webapp must die with the database, that belongs in the app or a `livenessProbe` on webapp
+(`failureThreshold` consecutive failed probes before a restart; default 1).
 
 ---
 

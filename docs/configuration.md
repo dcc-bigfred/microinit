@@ -198,7 +198,7 @@ Success → `succeeded`. Failure → `failed`.
 | `background` | Parallel start at boot |
 | `orderPriority` | Among ready services, lower starts earlier (default `100`; equal → alphabetical name) |
 | `dependsOn` | These must be `running` or `succeeded` first |
-| `livenessProbe` | Optional health check; failure triggers restart |
+| `livenessProbe` | Optional health check; consecutive failures reaching `failureThreshold` trigger restart |
 
 ### Liveness probe
 
@@ -213,7 +213,7 @@ Exactly **one** of `cmd`, `httpUrl`, or `tcpAddr`:
 }
 ```
 
-Defaults: `interval` 60 s, `timeout` 5 s.
+Defaults: `interval` 60 s, `timeout` 5 s, `failureThreshold` 1 (restart on the first failed probe).
 
 ---
 

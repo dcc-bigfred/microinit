@@ -6,7 +6,9 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use microinit::config::{Config, EarlyBootConfig, LogsConfig, RestartPolicy, ServiceConfig};
+use microinit::config::{
+    Config, EarlyBootConfig, LivenessProbe, LogsConfig, RestartPolicy, ServiceConfig,
+};
 use microinit::console::Console;
 use microinit::error::Error;
 use microinit::logs::LogHub;
@@ -424,8 +426,6 @@ fn start_force_bypasses_waiting_for_dependency() {
 
 #[test]
 fn liveness_probe_restarts_oneshot_on_failure() {
-    use microinit::config::LivenessProbe;
-
     let marker = std::env::temp_dir().join(format!(
         "microinit-live-{}-{}",
         std::process::id(),
@@ -449,6 +449,7 @@ fn liveness_probe_restarts_oneshot_on_failure() {
         http_method: "GET".into(),
         interval: 1,
         timeout: 5,
+        failure_threshold: 1,
     });
 
     let (sup, dir) = make_sup(vec![svc]);
@@ -502,6 +503,120 @@ fn liveness_probe_restarts_oneshot_on_failure() {
         }),
         "liveness_failed should carry detail"
     );
+
+    let _ = std::fs::remove_file(&marker);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+fn cmd_probe(cmd: String, interval: u64, timeout: u64, threshold: u32) -> LivenessProbe {
+    LivenessProbe {
+        cmd: Some(cmd),
+        http_url: None,
+        tcp_addr: None,
+        success_exit_codes: vec![0],
+        http_accepted_codes: vec![200],
+        http_method: "GET".into(),
+        interval,
+        timeout,
+        failure_threshold: threshold,
+    }
+}
+
+#[test]
+fn liveness_probe_true_does_not_fail_under_reaper() {
+    let mut svc = job("net", "true", &[], true);
+    svc.liveness_probe = Some(cmd_probe("true".into(), 1, 5, 1));
+    let (sup, dir) = make_sup(vec![svc]);
+    sup.boot().unwrap();
+    thread::sleep(Duration::from_millis(2500));
+    let st = sup.status("net").unwrap();
+    assert_eq!(st.state, ServiceState::Succeeded);
+    assert_eq!(
+        st.liveness_failures, 0,
+        "successful cmd probe must not report ECHILD / fail under the reaper"
+    );
+    assert_eq!(st.restarts, 0);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn liveness_probe_below_threshold_does_not_restart() {
+    let marker = std::env::temp_dir().join(format!(
+        "microinit-live-below-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_file(&marker);
+    let path = marker.to_string_lossy();
+    let mut svc = job("net", &format!("touch {path}"), &[], true);
+    svc.liveness_probe = Some(cmd_probe(format!("test -f {path}"), 1, 5, 3));
+    let (sup, dir) = make_sup(vec![svc]);
+    sup.boot().unwrap();
+    assert!(marker.exists());
+    std::fs::remove_file(&marker).unwrap();
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    let mut saw_fail = false;
+    while std::time::Instant::now() < deadline {
+        let st = sup.status("net").unwrap();
+        if st.liveness_failures >= 1 {
+            saw_fail = true;
+            break;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    let st = sup.status("net").unwrap();
+    assert!(
+        saw_fail,
+        "expected a liveness failure after removing marker"
+    );
+    assert_eq!(st.restarts, 0, "must not restart below failureThreshold=3");
+    assert!(
+        !marker.exists(),
+        "start must not have re-run (would recreate marker)"
+    );
+
+    let _ = std::fs::remove_file(&marker);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn liveness_probe_reaches_threshold_restarts() {
+    let marker = std::env::temp_dir().join(format!(
+        "microinit-live-thr-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_file(&marker);
+    let path = marker.to_string_lossy();
+    let mut svc = job("net", &format!("touch {path}"), &[], true);
+    svc.liveness_probe = Some(cmd_probe(format!("test -f {path}"), 1, 5, 2));
+    let (sup, dir) = make_sup(vec![svc]);
+    sup.boot().unwrap();
+    assert!(marker.exists());
+    std::fs::remove_file(&marker).unwrap();
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(6);
+    while std::time::Instant::now() < deadline {
+        let st = sup.status("net").unwrap();
+        if marker.exists() && st.restarts >= 1 {
+            break;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    let st = sup.status("net").unwrap();
+    assert!(
+        marker.exists(),
+        "start should recreate marker after reaching failureThreshold"
+    );
+    assert!(st.restarts >= 1, "expected restart at threshold 2");
+    assert!(st.liveness_failures >= 2);
 
     let _ = std::fs::remove_file(&marker);
     let _ = std::fs::remove_dir_all(dir);

@@ -41,6 +41,12 @@ pub const MAX_WATCH_FOLLOWERS: usize = 8;
 pub const WATCH_HEARTBEAT: Duration = Duration::from_secs(10);
 /// Poll interval while waiting for a process to exit after SIGTERM.
 pub const TERMINATE_POLL: Duration = Duration::from_millis(100);
+/// Poll interval while waiting on an owned `Child` (no PID-1 reaper).
+pub const CHILD_WAIT_POLL: Duration = Duration::from_millis(50);
+/// After SIGKILL, wait this long for the central reaper to publish the exit.
+pub const REAP_AFTER_KILL: Duration = Duration::from_millis(500);
+/// Slice used when waiting forever on the exit registry (avoids `Instant` overflow).
+pub const CHILD_WAIT_SLICE: Duration = Duration::from_secs(60);
 /// Per-service lifecycle event ring capacity (bounded memory).
 /// Same as [`EVENT_RETURN`]: the ring only exists to feed `describe`.
 pub const EVENT_RING_CAP: usize = 16;

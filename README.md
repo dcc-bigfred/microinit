@@ -9,7 +9,8 @@ Works in embedded systems based on Linux as well as in containers.
 
 Lightning fast and solid-rock reliable. Inspired by supervisord and Kubernetes, handles dependencies, able to self-heal.
 
-The services are health-checked with liveness probes and restarted. Cascade services depending on others are started as soon as dependency is started.
+The services are health-checked with liveness probes and restarted after
+`failureThreshold` consecutive failures (default 1). Cascade services depending on others are started as soon as dependency is started.
 
 There are two modes - `microinit init` and `microinit supervise`. Init replaces `/sbin/init`, and supervise replaces `supervisord`.
 
