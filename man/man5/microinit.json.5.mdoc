@@ -196,11 +196,14 @@ must be set.
 Shared fields:
 .Cm interval
 in seconds
-.Pq default 60
-and
+.Pq default 60 ,
 .Cm timeout
 in seconds
-.Pq default 5 .
+.Pq default 5 ,
+and
+.Cm failureThreshold
+consecutive failed probes before a restart
+.Pq default 1 .
 .Cm cmd
 uses
 .Cm successExitCodes
@@ -223,7 +226,9 @@ or
 .Cm failed ,
 microinit probes every
 .Cm interval
-seconds; failure re-runs start.
+seconds; after
+.Cm failureThreshold
+consecutive failures, microinit re-runs start.
 .It Cm securityContext
 Optional object. On Linux: drops the service to another user/group and optionally
 keeps Linux capabilities across

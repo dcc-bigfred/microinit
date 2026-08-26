@@ -379,6 +379,7 @@ fn parses_liveness_probe_with_defaults() {
     assert_eq!(probe.success_exit_codes, vec![0]);
     assert_eq!(probe.interval, 60);
     assert_eq!(probe.timeout, 5);
+    assert_eq!(probe.failure_threshold, 1);
     assert_eq!(probe.http_method, "GET");
     assert_eq!(probe.http_accepted_codes, vec![200]);
 }
@@ -406,6 +407,7 @@ fn parses_http_and_tcp_liveness_probes() {
     assert_eq!(p.http_method, "HEAD");
     assert_eq!(p.http_accepted_codes, vec![200, 204]);
     assert!(p.cmd.is_none());
+    assert_eq!(p.failure_threshold, 1);
 
     let tcp = r#"{
       "version": 1,
@@ -444,6 +446,7 @@ fn rejects_empty_liveness_probe_cmd() {
         http_method: "GET".into(),
         interval: 30,
         timeout: 5,
+        failure_threshold: 1,
     });
     cfg.services.push(svc);
     assert!(cfg.validate().is_err());
@@ -465,6 +468,50 @@ fn rejects_multiple_liveness_probe_kinds() {
     let cfg: Config = serde_json::from_str(raw).unwrap();
     let err = cfg.validate().unwrap_err().to_string();
     assert!(err.contains("exactly one"), "{err}");
+}
+
+#[test]
+fn parses_liveness_failure_threshold() {
+    let raw = r#"{
+      "version": 1,
+      "services": [{
+        "name": "net",
+        "cmd": "/bin/true",
+        "livenessProbe": {
+          "cmd": "true",
+          "failureThreshold": 3
+        }
+      }]
+    }"#;
+    let cfg: Config = serde_json::from_str(raw).unwrap();
+    cfg.validate().unwrap();
+    assert_eq!(
+        cfg.get("net")
+            .unwrap()
+            .liveness_probe
+            .as_ref()
+            .unwrap()
+            .failure_threshold,
+        3
+    );
+}
+
+#[test]
+fn rejects_zero_liveness_failure_threshold() {
+    let raw = r#"{
+      "version": 1,
+      "services": [{
+        "name": "net",
+        "cmd": "/bin/true",
+        "livenessProbe": {
+          "cmd": "true",
+          "failureThreshold": 0
+        }
+      }]
+    }"#;
+    let cfg: Config = serde_json::from_str(raw).unwrap();
+    let err = cfg.validate().unwrap_err().to_string();
+    assert!(err.contains("failureThreshold"), "{err}");
 }
 
 #[test]

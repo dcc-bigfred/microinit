@@ -6,9 +6,10 @@ use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
 use crate::config::ServiceConfig;
-use crate::constants::TERMINATE_POLL;
+use crate::constants::{CHILD_WAIT_POLL, CHILD_WAIT_SLICE, REAP_AFTER_KILL, TERMINATE_POLL};
 use crate::error::{Error, Result};
 use crate::protocol::RunningIdentity;
+use crate::reaper;
 
 /// Shell used to run service `cmd` / probes / stop scripts.
 #[cfg(target_os = "android")]
@@ -113,38 +114,115 @@ pub fn spawn_shell(cmd: &str, cfg: &ServiceConfig) -> Result<Child> {
         .map_err(|e| Error::Service(cfg.name.clone(), e.to_string()))
 }
 
+enum ChildWait {
+    Forever,
+    Timeout(Duration),
+}
+
+fn spawn_shell_cmd(
+    cmd: &str,
+    cfg: &ServiceConfig,
+    env_extra: &HashMap<String, String>,
+    quiet: bool,
+) -> Result<Child> {
+    #[cfg(not(target_os = "android"))]
+    let ident = resolve_sec(cfg)?;
+    #[cfg(not(target_os = "android"))]
+    let mut cmd_built = build_shell_command(cmd, cfg, env_extra, ident.as_ref());
+    #[cfg(target_os = "android")]
+    let mut cmd_built = build_shell_command(cmd, cfg, env_extra);
+    if quiet {
+        cmd_built.stdout(Stdio::null()).stderr(Stdio::null());
+    }
+    cmd_built
+        .spawn()
+        .map_err(|e| Error::Service(cfg.name.clone(), e.to_string()))
+}
+
+/// Wait for a spawned child without racing the PID-1 reaper.
+///
+/// While [`reaper::is_running`] the central `waitpid(-1)` thread already reaps
+/// every child. `Child::wait` / `try_wait` then return `ECHILD`. Forget the
+/// `Child` and wait on [`reaper::global_exits`] instead. Unit tests that never
+/// start the reaper keep the owned-wait path.
+fn wait_spawned_child(mut child: Child, name: &str, bound: ChildWait) -> Result<Option<i32>> {
+    let pid = child.id() as i32;
+    if reaper::is_running() {
+        drop(child.stdout.take());
+        drop(child.stderr.take());
+        std::mem::forget(child);
+        wait_via_registry(pid, bound)
+    } else {
+        wait_via_owned(child, name, bound)
+    }
+}
+
+fn wait_via_registry(pid: i32, bound: ChildWait) -> Result<Option<i32>> {
+    let exits = reaper::global_exits();
+    match bound {
+        ChildWait::Forever => loop {
+            if let Some(code) = exits.wait_take(pid, CHILD_WAIT_SLICE) {
+                return Ok(Some(code));
+            }
+        },
+        ChildWait::Timeout(timeout) => {
+            if let Some(code) = exits.wait_take(pid, timeout) {
+                return Ok(Some(code));
+            }
+            terminate_pid(nix::unistd::Pid::from_raw(pid), 0);
+            let _ = exits.wait_take(pid, REAP_AFTER_KILL);
+            Ok(None)
+        }
+    }
+}
+
+fn wait_via_owned(mut child: Child, name: &str, bound: ChildWait) -> Result<Option<i32>> {
+    match bound {
+        ChildWait::Forever => {
+            let status = child
+                .wait()
+                .map_err(|e| Error::Service(name.to_string(), e.to_string()))?;
+            Ok(Some(status.code().unwrap_or(1)))
+        }
+        ChildWait::Timeout(timeout) => {
+            use std::thread;
+            use std::time::Instant;
+            let deadline = Instant::now() + timeout;
+            loop {
+                match child.try_wait() {
+                    Ok(Some(status)) => return Ok(Some(status.code().unwrap_or(1))),
+                    Ok(None) => {
+                        if Instant::now() >= deadline {
+                            let pid = child.id() as i32;
+                            terminate_pid(nix::unistd::Pid::from_raw(pid), 0);
+                            let _ = child.wait();
+                            return Ok(None);
+                        }
+                        thread::sleep(CHILD_WAIT_POLL);
+                    }
+                    Err(e) => {
+                        return Err(Error::Service(name.to_string(), e.to_string()));
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Run a shell command to completion (for stop/restart scripts that are short-lived).
 pub fn run_shell(
     cmd: &str,
     cfg: &ServiceConfig,
     env_extra: &HashMap<String, String>,
 ) -> Result<i32> {
-    #[cfg(not(target_os = "android"))]
-    let ident = resolve_sec(cfg)?;
-    #[cfg(not(target_os = "android"))]
-    let status = build_shell_command(cmd, cfg, env_extra, ident.as_ref())
-        .status()
-        .map_err(|e| Error::Service(cfg.name.clone(), e.to_string()))?;
-    #[cfg(target_os = "android")]
-    let status = build_shell_command(cmd, cfg, env_extra)
-        .status()
-        .map_err(|e| Error::Service(cfg.name.clone(), e.to_string()))?;
-    Ok(status.code().unwrap_or(1))
+    let child = spawn_shell_cmd(cmd, cfg, env_extra, false)?;
+    Ok(wait_spawned_child(child, &cfg.name, ChildWait::Forever)?.unwrap_or(1))
 }
 
 /// Like [`run_shell`], but discard stdout/stderr (liveness probes must stay cheap/quiet).
 pub fn run_shell_quiet(cmd: &str, cfg: &ServiceConfig) -> Result<i32> {
-    #[cfg(not(target_os = "android"))]
-    let ident = resolve_sec(cfg)?;
-    #[cfg(not(target_os = "android"))]
-    let mut c = build_shell_command(cmd, cfg, &HashMap::new(), ident.as_ref());
-    #[cfg(target_os = "android")]
-    let mut c = build_shell_command(cmd, cfg, &HashMap::new());
-    c.stdout(Stdio::null()).stderr(Stdio::null());
-    let status = c
-        .status()
-        .map_err(|e| Error::Service(cfg.name.clone(), e.to_string()))?;
-    Ok(status.code().unwrap_or(1))
+    let child = spawn_shell_cmd(cmd, cfg, &HashMap::new(), true)?;
+    Ok(wait_spawned_child(child, &cfg.name, ChildWait::Forever)?.unwrap_or(1))
 }
 
 /// Quiet shell command with a hard timeout; kills the process group on expiry.
@@ -155,40 +233,8 @@ pub fn run_shell_quiet_timeout(
     cfg: &ServiceConfig,
     timeout: Duration,
 ) -> Result<Option<i32>> {
-    use std::thread;
-    use std::time::Instant;
-
-    #[cfg(not(target_os = "android"))]
-    let ident = resolve_sec(cfg)?;
-    #[cfg(not(target_os = "android"))]
-    let mut cmd_built = build_shell_command(cmd, cfg, &HashMap::new(), ident.as_ref());
-    #[cfg(target_os = "android")]
-    let mut cmd_built = build_shell_command(cmd, cfg, &HashMap::new());
-
-    let mut child = cmd_built
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|e| Error::Service(cfg.name.clone(), e.to_string()))?;
-
-    let deadline = Instant::now() + timeout;
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => return Ok(Some(status.code().unwrap_or(1))),
-            Ok(None) => {
-                if Instant::now() >= deadline {
-                    let pid = child.id() as i32;
-                    terminate_pid(nix::unistd::Pid::from_raw(pid), 0);
-                    let _ = child.wait();
-                    return Ok(None);
-                }
-                thread::sleep(Duration::from_millis(50));
-            }
-            Err(e) => {
-                return Err(Error::Service(cfg.name.clone(), e.to_string()));
-            }
-        }
-    }
+    let child = spawn_shell_cmd(cmd, cfg, &HashMap::new(), true)?;
+    wait_spawned_child(child, &cfg.name, ChildWait::Timeout(timeout))
 }
 
 /// Read the real uid/gid of a live process from `/proc/<pid>/status`.

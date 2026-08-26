@@ -82,6 +82,15 @@ pub fn global_exits() -> Arc<ExitRegistry> {
         .clone()
 }
 
+/// True once [`ensure_reaper_thread`] has started the `waitpid(-1)` loop.
+///
+/// Callers that spawn short-lived children MUST NOT use `Child::wait` /
+/// `try_wait` while this is true — the reaper already owns `waitpid(-1)`.
+#[must_use]
+pub fn is_running() -> bool {
+    REAPER_STARTED.load(Ordering::SeqCst)
+}
+
 /// Ensure a single background `waitpid(-1)` thread publishes into [`global_exits`].
 pub fn ensure_reaper_thread() {
     if REAPER_STARTED.swap(true, Ordering::SeqCst) {
@@ -96,4 +105,16 @@ pub fn ensure_reaper_thread() {
             }
             thread::sleep(CTL_POLL);
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn is_running_false_until_started() {
+        // This crate's unit-test binary never starts the reaper; integration
+        // tests that call `ensure_reaper_thread` live in a separate process.
+        assert!(!is_running());
+    }
 }

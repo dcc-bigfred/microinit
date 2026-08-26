@@ -920,6 +920,7 @@ impl Supervisor {
     fn monitor_loop(self: Arc<Self>, name: String, rx: std::sync::mpsc::Receiver<CtlMsg>) {
         let mut tracked: Option<i32> = None;
         let mut next_liveness: Option<Instant> = None;
+        let mut liveness_streak: u32 = 0;
 
         loop {
             if self.shared.stop_all.load(Ordering::SeqCst) {
@@ -956,6 +957,7 @@ impl Supervisor {
                         self.apply_state(&name, ServiceState::Stopping, None);
                         self.stop_tracked(&cfg, &mut tracked);
                         next_liveness = None;
+                        liveness_streak = 0;
                         let enabled = self.shared.is_enabled(&name).unwrap_or(true);
                         if enabled {
                             self.apply_state(&name, ServiceState::Stopped, None);
@@ -967,6 +969,7 @@ impl Supervisor {
                     CtlMsg::Restart => {
                         self.hub
                             .emit(INIT_SERVICE, LogLevel::Info, format!("restarting {name}"));
+                        liveness_streak = 0;
                         self.stop_tracked(&cfg, &mut tracked);
                         if let Ok(restart) = cfg.resolve_restart() {
                             let code = run_shell(&restart, &cfg, &HashMap::new()).unwrap_or(1);
@@ -988,6 +991,7 @@ impl Supervisor {
                         if tracked.is_some() {
                             continue;
                         }
+                        liveness_streak = 0;
                         if let Err(e) = self.do_start(&cfg, &mut tracked, force) {
                             self.hub
                                 .emit(INIT_SERVICE, LogLevel::Error, format!("{name}: {e}"));
@@ -1002,6 +1006,7 @@ impl Supervisor {
             if let Some(pid) = tracked {
                 if let Some(code) = self.exits.take(pid) {
                     tracked = None;
+                    liveness_streak = 0;
                     if let Ok(cfg) = self.service_cfg(&name) {
                         self.on_process_exit(&cfg, &mut tracked, code);
                         next_liveness = Self::schedule_liveness(&cfg);
@@ -1026,7 +1031,12 @@ impl Supervisor {
 
             if !self.shared.stop_all.load(Ordering::SeqCst) {
                 if let Ok(cfg) = self.service_cfg(&name) {
-                    self.maybe_liveness(&cfg, &mut tracked, &mut next_liveness);
+                    self.maybe_liveness(
+                        &cfg,
+                        &mut tracked,
+                        &mut next_liveness,
+                        &mut liveness_streak,
+                    );
                 }
             }
         }
@@ -1038,12 +1048,14 @@ impl Supervisor {
             .map(|p| Instant::now() + Duration::from_secs(p.interval))
     }
 
-    /// Periodic health check: on failure, stop and re-run start.
+    /// Periodic health check: on consecutive failures reaching `failureThreshold`,
+    /// stop and re-run start.
     fn maybe_liveness(
         self: &Arc<Self>,
         cfg: &ServiceConfig,
         tracked: &mut Option<i32>,
         next_liveness: &mut Option<Instant>,
+        streak: &mut u32,
     ) {
         let Some(probe) = cfg.liveness_probe.as_ref() else {
             *next_liveness = None;
@@ -1079,6 +1091,7 @@ impl Supervisor {
         *next_liveness = Some(Instant::now() + Duration::from_secs(probe.interval));
 
         if outcome.is_ok() {
+            *streak = 0;
             if matches!(state, ServiceState::Failed) && !cfg.daemon {
                 self.apply_state(&cfg.name, ServiceState::Succeeded, None);
             }
@@ -1089,13 +1102,28 @@ impl Supervisor {
             ProbeResult::Fail(r) => r,
             ProbeResult::Ok => unreachable!(),
         };
+        *streak = streak.saturating_add(1);
+        let threshold = probe.failure_threshold.max(1);
+        self.shared
+            .bump_liveness_failures(&cfg.name, Some(reason.clone()));
+        if *streak < threshold {
+            self.hub.emit(
+                INIT_SERVICE,
+                LogLevel::Warn,
+                format!(
+                    "{}: livenessProbe failed ({reason}) ({streak}/{threshold})",
+                    cfg.name
+                ),
+            );
+            return;
+        }
+        *streak = 0;
         self.hub.emit(
             INIT_SERVICE,
             LogLevel::Warn,
             format!("{}: livenessProbe failed ({reason}), restarting", cfg.name),
         );
         self.apply_state(&cfg.name, ServiceState::Restarting, None);
-        self.shared.bump_liveness_failures(&cfg.name, Some(reason));
         self.shared.bump_restarts(&cfg.name);
         self.stop_tracked(cfg, tracked);
         if let Err(e) = self.do_start(cfg, tracked, false) {

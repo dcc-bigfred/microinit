@@ -221,6 +221,9 @@ pub struct LivenessProbe {
     /// Seconds before a probe attempt is aborted. Default 5.
     #[serde(default = "default_liveness_timeout")]
     pub timeout: u64,
+    /// Consecutive failed probes before a restart. Default 1 (restart on first failure).
+    #[serde(default = "default_liveness_failure_threshold")]
+    pub failure_threshold: u32,
 }
 
 fn default_liveness_interval() -> u64 {
@@ -229,6 +232,10 @@ fn default_liveness_interval() -> u64 {
 
 fn default_liveness_timeout() -> u64 {
     5
+}
+
+fn default_liveness_failure_threshold() -> u32 {
+    1
 }
 
 fn default_http_accepted_codes() -> Vec<u16> {
@@ -662,6 +669,12 @@ impl Config {
                         svc.name
                     )));
                 }
+                if probe.failure_threshold < 1 {
+                    return Err(Error::Config(format!(
+                        "service '{}': livenessProbe.failureThreshold must be >= 1",
+                        svc.name
+                    )));
+                }
             }
             validate_labels(&svc.name, &svc.labels)?;
             if let Some(ref sec) = svc.security_context {
@@ -977,6 +990,7 @@ pub fn example_config() -> Config {
                     http_method: "GET".into(),
                     interval: 30,
                     timeout: 5,
+                    failure_threshold: 1,
                 }),
                 labels: BTreeMap::new(),
                 security_context: None,
