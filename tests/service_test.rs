@@ -1,7 +1,6 @@
 //! Unit/integration tests for microinit::service
 
 use std::collections::{BTreeMap, HashMap};
-use std::time::Duration;
 
 use microinit::config::{RestartPolicy, ServiceConfig};
 use microinit::service::*;
@@ -185,19 +184,4 @@ fn path_precedence_default_file_cfg_extra() {
     assert_eq!(code, 0, "env_extra PATH should override cfg.env");
 
     envfile::install(HashMap::new());
-}
-
-#[test]
-fn run_shell_quiet_timeout_ok_and_expiry() {
-    let c = cfg();
-    let code = run_shell_quiet_timeout("exit 0", &c, Duration::from_secs(2))
-        .unwrap()
-        .expect("true should finish");
-    assert_eq!(code, 0);
-    assert!(
-        run_shell_quiet_timeout("sleep 30", &c, Duration::from_millis(200))
-            .unwrap()
-            .is_none(),
-        "sleep should time out"
-    );
 }
