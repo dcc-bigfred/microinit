@@ -1,71 +1,26 @@
 //! Unix socket IPC: length-prefixed JSON frames (4-byte LE length + payload).
 
 use std::io::{Read, Write};
-use std::os::unix::net::{UnixListener, UnixStream};
+use std::os::unix::net::UnixStream;
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::thread;
+
+use dcc_daemon::ipc::{
+    read_frame_with_limit, write_frame_with_limit, AcceptPolicy, Auth, BindError, BindOptions,
+    Command, Connection, ErrorHandler, IpcError, RejectReason, Router, SessionMode,
+};
+use serde_json::Value;
 
 use crate::constants::{MAX_IPC_CLIENTS, MAX_IPC_FRAME_BYTES};
 use crate::error::{Error, Result};
 use crate::protocol::{Request, Response};
 
-static ACTIVE_CLIENTS: AtomicUsize = AtomicUsize::new(0);
-
-struct ClientSlot;
-
-impl ClientSlot {
-    fn try_acquire() -> Option<Self> {
-        loop {
-            let cur = ACTIVE_CLIENTS.load(Ordering::SeqCst);
-            if cur >= MAX_IPC_CLIENTS {
-                return None;
-            }
-            if ACTIVE_CLIENTS
-                .compare_exchange(cur, cur + 1, Ordering::SeqCst, Ordering::SeqCst)
-                .is_ok()
-            {
-                return Some(Self);
-            }
-        }
-    }
-}
-
-impl Drop for ClientSlot {
-    fn drop(&mut self) {
-        ACTIVE_CLIENTS.fetch_sub(1, Ordering::SeqCst);
-    }
-}
-
 pub fn write_frame_to(writer: &mut impl Write, msg: &impl serde::Serialize) -> Result<()> {
-    let payload = serde_json::to_vec(msg)?;
-    if payload.len() > MAX_IPC_FRAME_BYTES {
-        return Err(Error::Ipc(format!(
-            "frame length {} exceeds max {MAX_IPC_FRAME_BYTES}",
-            payload.len()
-        )));
-    }
-    debug_assert!(payload.len() <= MAX_IPC_FRAME_BYTES);
-    let len = u32::try_from(payload.len())
-        .map_err(|_| Error::Ipc("frame too large for u32 length prefix".into()))?
-        .to_le_bytes();
-    writer.write_all(&len)?;
-    writer.write_all(&payload)?;
-    writer.flush()?;
-    Ok(())
+    write_frame_with_limit(writer, msg, MAX_IPC_FRAME_BYTES).map_err(map_frame)
 }
 
 pub fn read_frame_from<T: serde::de::DeserializeOwned>(reader: &mut impl Read) -> Result<T> {
-    let mut len_buf = [0u8; 4];
-    reader.read_exact(&mut len_buf)?;
-    let len = u32::from_le_bytes(len_buf) as usize;
-    if len > MAX_IPC_FRAME_BYTES {
-        return Err(Error::Ipc(format!("frame length {len} too large")));
-    }
-    let mut buf = vec![0u8; len];
-    reader.read_exact(&mut buf)?;
-    Ok(serde_json::from_slice(&buf)?)
+    read_frame_with_limit(reader, MAX_IPC_FRAME_BYTES).map_err(map_frame)
 }
 
 pub fn write_frame(stream: &mut UnixStream, msg: &impl serde::Serialize) -> Result<()> {
@@ -91,6 +46,21 @@ pub fn request(socket_path: &Path, req: &Request) -> Result<Response> {
     read_frame(&mut stream)
 }
 
+fn map_frame(e: dcc_daemon::ipc::FrameError) -> Error {
+    Error::Ipc(e.to_string())
+}
+
+fn map_bind(e: BindError) -> Error {
+    match e {
+        BindError::AlreadyRunning {
+            process_name,
+            location,
+            ..
+        } => Error::Ipc(format!("{process_name} already running at {location}")),
+        BindError::Io { path, source } => Error::io_at(path, source),
+    }
+}
+
 /// Peer allowlist for the control socket (from `socketAllowUsers`).
 #[derive(Debug, Clone)]
 pub struct IpcAllow {
@@ -113,172 +83,160 @@ impl Default for IpcAllow {
     }
 }
 
-/// Peer credential check: daemon uid, or an entry in `allow_uids`.
-fn peer_allowed(stream: &UnixStream, daemon_uid: u32, allow_uids: &[u32]) -> bool {
-    use nix::sys::socket::{getsockopt, sockopt::PeerCredentials};
-    match getsockopt(stream, PeerCredentials) {
-        Ok(cred) => {
-            let uid = cred.uid();
-            uid == daemon_uid || allow_uids.contains(&uid)
-        }
-        Err(_) => false,
-    }
-}
-
+/// Bind socket and accept clients in a background thread.
 pub type Handler = Arc<dyn Fn(Request, &mut UnixStream) -> Result<()> + Send + Sync>;
 
-/// Bind socket and accept clients in a background thread.
-///
-/// Concurrent handlers are capped at [`MAX_IPC_CLIENTS`]; excess clients receive
-/// an immediate error response.
-///
-/// When `allow.allow_uids` is non-empty, the socket is immediately set to
-/// `0660` and `chown`ed to `daemon_uid:<allow.socket_gid>` (fail-closed if
-/// gid missing). Otherwise the socket stays `0600` (daemon-uid-only).
-///
-/// Refuses to start if another process is already listening on `socket_path`
-/// (`already running`). A leftover `.sock` file after a crash is unlinked and
-/// reused.
-/// Bind the control socket without stealing a live daemon's inode.
-///
-/// 1. `connect` — if a peer answers, refuse (`already running`); do not unlink.
-/// 2. `NotFound` / `ConnectionRefused` — leftover inode (or nothing) → unlink, then bind.
-/// 3. Any other connect error is returned as-is (do not unlink a mystery path).
-fn bind_singleton(socket_path: &Path) -> Result<UnixListener> {
-    match UnixStream::connect(socket_path) {
-        Ok(stream) => {
-            let pid = peer_pid(&stream);
-            let where_ = if pid != 0 {
-                format!("{} (pid {pid})", socket_path.display())
-            } else {
-                socket_path.display().to_string()
-            };
-            return Err(Error::Ipc(format!("microinit already running at {where_}")));
-        }
-        Err(e) if is_stale_socket_connect_error(&e) => {}
-        Err(e) => return Err(Error::io_at(socket_path, e)),
-    }
-    match std::fs::remove_file(socket_path) {
-        Ok(()) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => return Err(Error::io_at(socket_path, e)),
-    }
-    UnixListener::bind(socket_path).map_err(|e| Error::io_at(socket_path, e))
+struct HandlerState {
+    handler: Handler,
 }
 
-fn is_stale_socket_connect_error(err: &std::io::Error) -> bool {
-    matches!(
-        err.kind(),
-        std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
-    )
-}
-
-fn peer_pid(stream: &UnixStream) -> u32 {
-    use nix::sys::socket::{getsockopt, sockopt::PeerCredentials};
-    getsockopt(stream, PeerCredentials)
-        .map(|c| c.pid() as u32)
-        .unwrap_or(0)
-}
-
-pub fn serve(socket_path: &Path, handler: Handler, allow: IpcAllow) -> Result<()> {
-    if let Some(parent) = socket_path.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent).map_err(|e| Error::io_at(parent, e))?;
-        }
-    }
-    let listener = bind_singleton(socket_path)?;
-    apply_socket_perms(socket_path, &allow)?;
-
-    let path = socket_path.to_path_buf();
-    let daemon_uid = allow.daemon_uid;
-    let allow_uids = allow.allow_uids;
-    thread::spawn(move || {
-        for conn in listener.incoming() {
-            match conn {
-                Ok(mut stream) => {
-                    if !peer_allowed(&stream, daemon_uid, &allow_uids) {
-                        let _ = write_frame(
-                            &mut stream,
-                            &Response::Error {
-                                message: "permission denied".into(),
-                                code: Some("permission_denied".into()),
-                            },
-                        );
-                        continue;
-                    }
-                    let Some(_slot) = ClientSlot::try_acquire() else {
-                        let _ = write_frame(
-                            &mut stream,
-                            &Response::Error {
-                                message: format!(
-                                    "too many concurrent IPC clients (max {MAX_IPC_CLIENTS})"
-                                ),
-                                code: Some("busy".into()),
-                            },
-                        );
-                        continue;
-                    };
-                    let h = handler.clone();
-                    thread::spawn(move || {
-                        let _slot = _slot;
-                        let req: Request = match read_frame(&mut stream) {
-                            Ok(r) => r,
-                            Err(_) => return,
-                        };
-                        if let Err(e) = h(req, &mut stream) {
-                            let _ = write_frame(
-                                &mut stream,
-                                &Response::Error {
-                                    message: e.to_string(),
-                                    code: e.code().map(|s| s.to_string()),
-                                },
-                            );
-                        }
-                    });
-                }
-                Err(_) => {
-                    if !path.exists() {
-                        break;
-                    }
-                }
+macro_rules! handler_cmd {
+    ($ty:ident, $name:literal) => {
+        struct $ty;
+        impl Command<HandlerState> for $ty {
+            fn name(&self) -> &'static str {
+                $name
+            }
+            fn execute(
+                &self,
+                state: &HandlerState,
+                body: Value,
+                conn: &mut Connection,
+            ) -> std::result::Result<(), IpcError> {
+                dispatch_handler(state, body, conn)
             }
         }
-    });
-    Ok(())
+    };
 }
 
-fn apply_socket_perms(socket_path: &Path, allow: &IpcAllow) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    if allow.allow_uids.is_empty() {
-        let mut perms = std::fs::metadata(socket_path)
-            .map_err(|e| Error::io_at(socket_path, e))?
-            .permissions();
-        perms.set_mode(0o600);
-        std::fs::set_permissions(socket_path, perms).map_err(|e| Error::io_at(socket_path, e))?;
-        return Ok(());
+handler_cmd!(ListCmd, "list");
+handler_cmd!(StartCmd, "start");
+handler_cmd!(StopCmd, "stop");
+handler_cmd!(RestartCmd, "restart");
+handler_cmd!(StatusCmd, "status");
+handler_cmd!(DescribeCmd, "describe");
+handler_cmd!(EnableCmd, "enable");
+handler_cmd!(LogsCmd, "logs");
+handler_cmd!(InfoCmd, "info");
+handler_cmd!(ShutdownCmd, "shutdown");
+handler_cmd!(WatchCmd, "watch");
+
+fn dispatch_handler(
+    state: &HandlerState,
+    body: Value,
+    conn: &mut Connection,
+) -> std::result::Result<(), IpcError> {
+    let req: Request = serde_json::from_value(body).map_err(|e| IpcError::Other(e.to_string()))?;
+    (state.handler)(req, conn.stream()).map_err(|e| IpcError::Other(e.to_string()))
+}
+
+struct InitHooks;
+
+impl ErrorHandler<HandlerState> for InitHooks {
+    fn unknown(
+        &self,
+        _state: &HandlerState,
+        type_name: &str,
+        _body: &Value,
+        conn: &mut Connection,
+    ) {
+        let _ = conn.reply(&Response::Error {
+            message: format!("unknown variant `{type_name}`"),
+            code: None,
+        });
     }
-    let gid = allow.socket_gid.ok_or_else(|| {
-        Error::Config("socketAllowUsers set but no socket group could be resolved".into())
-    })?;
-    // chmod + chown immediately after bind — no window with 0600 for allowlisted peers.
-    let mut perms = std::fs::metadata(socket_path)
-        .map_err(|e| Error::io_at(socket_path, e))?
-        .permissions();
-    perms.set_mode(0o660);
-    std::fs::set_permissions(socket_path, perms).map_err(|e| Error::io_at(socket_path, e))?;
-    use nix::unistd::{chown, Gid, Uid};
-    // Owner is the daemon uid (usually 0 on hub), not hardcoded root — so
-    // non-root supervise / tests can still chown successfully.
-    chown(
-        socket_path,
-        Some(Uid::from_raw(allow.daemon_uid)),
-        Some(Gid::from_raw(gid)),
+    fn error(&self, _state: &HandlerState, err: &IpcError, conn: &mut Connection) {
+        let _ = conn.reply(&Response::Error {
+            message: err.to_string(),
+            code: None,
+        });
+    }
+    fn reject(&self, _state: &HandlerState, reason: RejectReason, conn: &mut Connection) {
+        match reason {
+            RejectReason::Auth => {
+                let _ = conn.reply(&Response::Error {
+                    message: "permission denied".into(),
+                    code: Some("permission_denied".into()),
+                });
+            }
+            RejectReason::Busy => {
+                let _ = conn.reply(&Response::Error {
+                    message: format!("too many concurrent IPC clients (max {MAX_IPC_CLIENTS})"),
+                    code: Some("busy".into()),
+                });
+            }
+        }
+    }
+}
+
+fn handler_router() -> std::result::Result<Router<HandlerState>, Error> {
+    let mut router = Router::new();
+    router
+        .add(ListCmd)
+        .map_err(|e| Error::Other(e.to_string()))?;
+    router
+        .add(StartCmd)
+        .map_err(|e| Error::Other(e.to_string()))?;
+    router
+        .add(StopCmd)
+        .map_err(|e| Error::Other(e.to_string()))?;
+    router
+        .add(RestartCmd)
+        .map_err(|e| Error::Other(e.to_string()))?;
+    router
+        .add(StatusCmd)
+        .map_err(|e| Error::Other(e.to_string()))?;
+    router
+        .add(DescribeCmd)
+        .map_err(|e| Error::Other(e.to_string()))?;
+    router
+        .add(EnableCmd)
+        .map_err(|e| Error::Other(e.to_string()))?;
+    router
+        .add(LogsCmd)
+        .map_err(|e| Error::Other(e.to_string()))?;
+    router
+        .add(InfoCmd)
+        .map_err(|e| Error::Other(e.to_string()))?;
+    router
+        .add(ShutdownCmd)
+        .map_err(|e| Error::Other(e.to_string()))?;
+    router
+        .add(WatchCmd)
+        .map_err(|e| Error::Other(e.to_string()))?;
+    Ok(router)
+}
+
+/// Bind the control socket without stealing a live daemon's inode.
+pub fn serve(socket_path: &Path, handler: Handler, allow: IpcAllow) -> Result<()> {
+    let (mode, chown) = if allow.allow_uids.is_empty() {
+        (0o600, None)
+    } else {
+        let gid = allow.socket_gid.ok_or_else(|| {
+            Error::Config("socketAllowUsers set but no socket group could be resolved".into())
+        })?;
+        (0o660, Some((allow.daemon_uid, gid)))
+    };
+    let state = Arc::new(HandlerState { handler });
+    dcc_daemon::ipc::serve_background(
+        BindOptions {
+            path: socket_path.to_path_buf(),
+            mode,
+            chown,
+            process_name: "microinit",
+        },
+        AcceptPolicy {
+            auth: Auth::PeerUid {
+                daemon_uid: allow.daemon_uid,
+                allow_uids: allow.allow_uids,
+            },
+            session: SessionMode::OneShot,
+            max_clients: Some(MAX_IPC_CLIENTS),
+            max_frame: MAX_IPC_FRAME_BYTES,
+        },
+        handler_router()?,
+        InitHooks,
+        state,
     )
-    .map_err(|e| {
-        Error::io_at(
-            socket_path,
-            std::io::Error::other(format!("chown socket: {e}")),
-        )
-    })?;
-    Ok(())
+    .map_err(map_bind)
 }
