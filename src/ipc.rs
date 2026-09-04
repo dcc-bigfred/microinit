@@ -5,7 +5,7 @@ use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::sync::Arc;
 
-use dcc_daemon::ipc::{
+use bigfred_shared_daemon::ipc::{
     read_frame_with_limit, write_frame_with_limit, AcceptPolicy, Auth, BindError, BindOptions,
     Command, Connection, ErrorHandler, IpcError, RejectReason, Router, SessionMode,
 };
@@ -46,7 +46,7 @@ pub fn request(socket_path: &Path, req: &Request) -> Result<Response> {
     read_frame(&mut stream)
 }
 
-fn map_frame(e: dcc_daemon::ipc::FrameError) -> Error {
+fn map_frame(e: bigfred_shared_daemon::ipc::FrameError) -> Error {
     Error::Ipc(e.to_string())
 }
 
@@ -218,7 +218,7 @@ pub fn serve(socket_path: &Path, handler: Handler, allow: IpcAllow) -> Result<()
         (0o660, Some((allow.daemon_uid, gid)))
     };
     let state = Arc::new(HandlerState { handler });
-    dcc_daemon::ipc::serve_background(
+    bigfred_shared_daemon::ipc::serve_background(
         BindOptions {
             path: socket_path.to_path_buf(),
             mode,

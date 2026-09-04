@@ -1,4 +1,4 @@
-//! Forward `dcc-daemon` (`log` crate) lines into [`LogHub`].
+//! Forward `bigfred-shared-daemon` (`log` crate) lines into [`LogHub`].
 //!
 //! microinit does not otherwise initialize a `log` backend, so watcher warnings
 //! would be dropped.
@@ -15,7 +15,7 @@ struct Bridge;
 
 impl log::Log for Bridge {
     fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
-        metadata.level() <= log::Level::Info && metadata.target().starts_with("dcc_daemon")
+        metadata.level() <= log::Level::Info && metadata.target().starts_with("bigfred_shared_daemon")
     }
 
     fn log(&self, record: &log::Record<'_>) {
@@ -54,7 +54,7 @@ pub fn install() {
     log::set_max_level(log::LevelFilter::Info);
 }
 
-/// Route subsequent `dcc_daemon` log lines to this hub.
+/// Route subsequent `bigfred_shared_daemon` log lines to this hub.
 pub fn set_hub(hub: Arc<LogHub>) {
     match HUB.write() {
         Ok(mut g) => *g = Some(hub),
@@ -67,11 +67,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn dcc_daemon_warn_reaches_hub() {
+    fn bigfred_shared_daemon_warn_reaches_hub() {
         install();
         let hub = Arc::new(LogHub::new(32, None, None, None));
         set_hub(hub.clone());
-        log::warn!(target: "dcc_daemon::config::watch", "cannot watch /x");
+        log::warn!(target: "bigfred_shared_daemon::config::watch", "cannot watch /x");
         let lines = hub.snapshot_mixed(32);
         assert!(
             lines.iter().any(|l| l.msg.contains("cannot watch /x")),

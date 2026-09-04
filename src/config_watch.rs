@@ -6,7 +6,7 @@ use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 use std::time::Duration;
 
-use dcc_daemon::config::{spawn_signal, PathFilter, WatchSpec};
+use bigfred_shared_daemon::config::{spawn_signal, PathFilter, WatchSpec};
 
 use crate::error::{Error, Result};
 use crate::logs::LogHub;
@@ -16,7 +16,7 @@ use crate::protocol::LogLevel;
 const DEBOUNCE: Duration = Duration::from_millis(300);
 
 /// Signal that configuration files may have changed.
-pub type ReloadSignal = dcc_daemon::config::Reload;
+pub type ReloadSignal = bigfred_shared_daemon::config::Reload;
 
 fn microinit_filter() -> PathFilter {
     PathFilter::Any {
@@ -32,7 +32,7 @@ fn microinit_filter() -> PathFilter {
 
 /// Filter path events relevant to microinit JSON config.
 pub fn is_relevant_path(path: &Path) -> bool {
-    dcc_daemon::config::is_relevant_path(path, &microinit_filter())
+    bigfred_shared_daemon::config::is_relevant_path(path, &microinit_filter())
 }
 
 /// Spawn an inotify watcher thread. Returns a receiver of debounce-coalesced reload signals.
@@ -47,7 +47,7 @@ pub fn spawn(
             recursive: false,
             filter: microinit_filter(),
         },
-        // Always listed: `dcc-daemon` late-attaches when `microinit.d/services`
+        // Always listed: `bigfred-shared-daemon` late-attaches when `microinit.d/services`
         // appears after first boot.
         WatchSpec {
             path: dropins_dir.clone(),
