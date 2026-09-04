@@ -29,6 +29,7 @@ pub mod init;
 pub mod ipc;
 pub mod labels;
 pub mod liveness;
+mod log_bridge;
 pub mod logs;
 #[cfg(feature = "otel")]
 pub mod otel;

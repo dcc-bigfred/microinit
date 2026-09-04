@@ -41,18 +41,20 @@ pub fn spawn(
     dropins_dir: PathBuf,
     hub: Arc<LogHub>,
 ) -> Result<(Receiver<ReloadSignal>, Arc<AtomicBool>)> {
-    let mut specs = vec![WatchSpec {
-        path: etc_dir.clone(),
-        recursive: false,
-        filter: microinit_filter(),
-    }];
-    if dropins_dir.is_dir() {
-        specs.push(WatchSpec {
+    let specs = vec![
+        WatchSpec {
+            path: etc_dir.clone(),
+            recursive: false,
+            filter: microinit_filter(),
+        },
+        // Always listed: `dcc-daemon` late-attaches when `microinit.d/services`
+        // appears after first boot.
+        WatchSpec {
             path: dropins_dir.clone(),
             recursive: true,
             filter: microinit_filter(),
-        });
-    }
+        },
+    ];
     let pair = spawn_signal(specs, DEBOUNCE).map_err(|e| Error::Other(e.to_string()))?;
     hub.emit(
         INIT_SERVICE,
