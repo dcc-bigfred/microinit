@@ -9,7 +9,8 @@ export RUSTUP_TOOLCHAIN
 PREFIX ?= /usr
 MANDIR ?= $(PREFIX)/share/man
 
-.PHONY: all build release release-musl release-android check test test-release-assertions clean man install-man fmt clippy
+.PHONY: all build release release-musl release-android check test test-release-assertions \
+	clean man install-man fmt clippy deps-update
 
 all: build
 
@@ -52,6 +53,10 @@ fmt:
 
 clippy:
 	$(CARGO) clippy --all-targets -- -D warnings
+
+# Refresh git crates (bigfred-shared-daemon) and rewrite Cargo.lock. Commit the lockfile afterwards.
+deps-update:
+	$(CARGO) update -p bigfred-shared-daemon
 
 clean:
 	$(CARGO) clean

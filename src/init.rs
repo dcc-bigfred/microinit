@@ -91,6 +91,7 @@ pub fn supervise_opts(
 }
 
 pub fn run(opts: InitOpts) -> Result<()> {
+    crate::log_bridge::install();
     // Resolve init-logs path early so pre-hub boot notes reach tty3 as well as stderr.
     let init_logs_preview = if opts.attach_ttys {
         Some(opts.init_logs_tty.as_str())
@@ -197,6 +198,7 @@ pub fn run(opts: InitOpts) -> Result<()> {
         (None, None)
     };
     let hub = Arc::new(LogHub::new(cfg.logs.lines, svc_tty, init_tty, log_dir));
+    crate::log_bridge::set_hub(hub.clone());
     // Boot phase: init lines → tty3 and stderr (see LogHub::boot_tee_stderr).
     let console = Arc::new(Console::open_with_hub(&opts.console, Some(hub.clone())));
 
@@ -254,6 +256,27 @@ pub fn run(opts: InitOpts) -> Result<()> {
     )?;
     hub.emit_init(LogLevel::Info, format!("IPC listening on {socket_path}"));
 
+    // Watch before boot: the control socket is already public, so a config write
+    // that races with service start must still queue a reload for the main loop.
+    let etc_dir = opts
+        .paths
+        .config
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("/data/etc"));
+    let dropins_dir_watch = opts.paths.dropins_dir.clone();
+    let paths_for_reload = opts.paths.clone();
+    let socket_override = opts.socket.clone();
+    let (reload_rx, _watch_stop) =
+        match crate::config_watch::spawn(etc_dir, dropins_dir_watch, hub.clone()) {
+            Ok(pair) => pair,
+            Err(e) => {
+                hub.emit_init(LogLevel::Warn, format!("config watch unavailable: {e}"));
+                let (_tx, rx) = std::sync::mpsc::channel();
+                (rx, Arc::new(std::sync::atomic::AtomicBool::new(true)))
+            }
+        };
+
     hub.emit_init(LogLevel::Info, "starting services");
     supervisor.boot()?;
     hub.emit_init(LogLevel::Info, "boot complete");
@@ -301,14 +324,6 @@ pub fn run(opts: InitOpts) -> Result<()> {
         );
     }
 
-    let etc_dir = opts
-        .paths
-        .config
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("/data/etc"));
-    let dropins_dir = opts.paths.dropins_dir.clone();
-    let paths_for_reload = opts.paths.clone();
     let machine_shutdown = opts.machine_shutdown;
     #[cfg(feature = "init")]
     let paths_for_unmount = opts.paths.clone();
@@ -318,17 +333,6 @@ pub fn run(opts: InitOpts) -> Result<()> {
     let unmount_init_logs_tty = init_logs_tty.clone();
     #[cfg(feature = "init")]
     let unmount_console = opts.console.clone();
-    let socket_override = opts.socket.clone();
-    let (reload_rx, _watch_stop) =
-        match crate::config_watch::spawn(etc_dir, dropins_dir, hub.clone()) {
-            Ok(pair) => pair,
-            Err(e) => {
-                hub.emit_init(LogLevel::Warn, format!("config watch unavailable: {e}"));
-                // Dummy channel that never fires.
-                let (_tx, rx) = std::sync::mpsc::channel();
-                (rx, Arc::new(std::sync::atomic::AtomicBool::new(true)))
-            }
-        };
 
     // Exits are published by the process-wide reaper thread started in Supervisor::boot.
     // Opportunistic reap here covers the window before that thread runs and orphans.
